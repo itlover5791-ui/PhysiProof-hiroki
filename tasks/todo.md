@@ -1,3 +1,11 @@
+# Treasure chest reward administration (2026-11-17)
+
+- [x] Add a managed reward pool and preserve the contents of awarded rewards.
+- [x] Add the admin tab, reward-only artwork selection, and player access to acquired artwork and titles.
+- [x] Verify authorization, lottery, asset ownership, deletion, type checks, and build.
+
+All 1,061 tests passed, including SQLite coverage for management, incremental migration, awards and equipment. Team buff definitions are editable; battle grants and live rarity previews are separate design decisions.
+
 # Restore treasure chest visibility during map-provider outages (2026-11-12)
 
 - [x] Reproduce timeouts and identify why a failed lease kept returning “preparing”.

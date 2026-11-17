@@ -6,18 +6,22 @@ import StudioUniformPreview from './StudioUniformPreview';
 import UniformAssetThumbnail from './UniformAssetThumbnail';
 import './UniformStudio.css';
 
-export default function UniformAssetPicker({kind,value,onSelect}: {kind:UniformAsset['kind'];value?:UniformAssetRef;onSelect:(ref:UniformAssetRef)=>void}) {
+export default function UniformAssetPicker({kind,value,onSelect,rewardOnly=false}: {kind:UniformAsset['kind'];value?:UniformAssetRef;onSelect:(ref:UniformAssetRef)=>void;rewardOnly?:boolean}) {
   const [search,setSearch]=useState(''),[query,setQuery]=useState(''),[page,setPage]=useState(1),[category,setCategory]=useState('');
   const [catalog,setCatalog]=useState<UniformAssetList>(),[error,setError]=useState(''),[refresh,setRefresh]=useState(0);
   useEffect(()=>{const timer=setTimeout(()=>{setPage(1);setQuery(search);},250);return()=>clearTimeout(timer);},[search]);
   useEffect(()=>{
     let active=true;setCatalog(undefined);setError('');
-    void client.api['uniform-assets'].$get({query:{kind,search:query,category,page:String(page),limit:'12'}}).then(async res=>{
+    const filters = {kind,search:query,category,page:String(page),limit:'12' as const};
+    const request = rewardOnly
+      ? client.api.admin['uniform-assets'].$get({query:{...filters,status:'published',reward_only:'true'}})
+      : client.api['uniform-assets'].$get({query:filters});
+    void request.then(async res=>{
       const body=await res.json(); if(!res.ok)throw new Error('error' in body?body.error:'素材一覧を読み込めません。');
       if(active)setCatalog(uniformAssetListSchema.parse(body));
     }).catch(e=>{if(active)setError(e.message);});
     return()=>{active=false;};
-  },[kind,query,category,page,refresh]);
+  },[kind,query,category,page,refresh,rewardOnly]);
   return <div className="pp-studio-picker">
     <div className="pp-studio-search"><input aria-label="素材を検索" placeholder="素材名を検索" maxLength={80} value={search} onChange={e=>setSearch(e.target.value)}/>
       <select aria-label="素材カテゴリ" value={category} onChange={e=>{setCategory(e.target.value);setPage(1);}}><option value="">すべてのカテゴリ</option>{catalog?.categories.map(c=><option key={c}>{c}</option>)}</select><button type="button" onClick={()=>setRefresh(n=>n+1)}>再読込</button></div>

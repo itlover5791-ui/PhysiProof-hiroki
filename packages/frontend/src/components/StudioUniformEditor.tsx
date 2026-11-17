@@ -1,8 +1,7 @@
 import {useEffect,useState} from 'react';
 import {useForm} from 'react-hook-form';
 import {zodResolver} from '@hookform/resolvers/zod';
-import {studioUniformDesignSchema,createStudioUniform,personalizeUniform,STUDIO_PATTERN_CHOICES,STUDIO_EMBLEM_CHOICES,CHEST_REWARDS,chestInventorySchema} from '@my-app/shared';
-import type {ChestRewardId} from '@my-app/shared';
+import {studioUniformDesignSchema,createStudioUniform,personalizeUniform,STUDIO_PATTERN_CHOICES,STUDIO_EMBLEM_CHOICES,chestInventorySchema} from '@my-app/shared';
 import type {UniformDesign,StudioUniformDesign,UniformPersonalization} from '@my-app/shared';
 import StudioUniformPreview from './StudioUniformPreview';
 import UniformAssetPicker from './UniformAssetPicker';
@@ -23,7 +22,7 @@ function Choices<T extends string>({label,options,value,onChange}:{label:string;
 export default function StudioUniformEditor({design:saved,revision,isTeam,editable,lettering,online,onSave,saveLabel,externalDirty=false,onDirtyChange,selectedPreset,personalRewards=false}:StudioEditorProps) {
   const {register,watch,setValue,reset,handleSubmit,formState:{isDirty,isSubmitting,errors}}=useForm<StudioUniformDesign>({resolver:zodResolver(studioUniformDesignSchema),defaultValues:createStudioUniform(saved)});
   const design=watch(),[view,setView]=useState<'front'|'back'>('front'),[message,setMessage]=useState(''),[ready,setReady]=useState(false),[parts,setParts]=useState<'model'|'pattern'|'emblem'>('model');
-  const [rewardInventory, setRewardInventory] = useState<{ rewards: ChestRewardId[]; completion_badges: number }>();
+  const [rewardInventory, setRewardInventory] = useState<ReturnType<typeof chestInventorySchema.parse>>();
   const [rewardError, setRewardError] = useState(false);
   useEffect(() => {
     if (!personalRewards || isTeam || !online) return;
@@ -44,6 +43,7 @@ export default function StudioUniformEditor({design:saved,revision,isTeam,editab
   const preview=isTeam&&lettering?personalizeUniform(design,lettering):design;
   const patternKey=view==='front'?'front_pattern':'back_pattern';
   const imageRole=parts==='emblem'?'emblem':patternKey,imageRef=design[imageRole];
+  const rewardAssets = rewardInventory?.items.filter(reward => reward.kind === parts) ?? [];
   function palette(role:'front_pattern'|'back_pattern'|'emblem',colors:Record<string,string>){const next={...design.part_colors};if(Object.keys(colors).length)next[role]=colors;else delete next[role];change('part_colors',Object.keys(next).length?next:undefined);}
   function selectImage(role:'front_pattern'|'back_pattern'|'emblem',value:StudioUniformDesign[typeof role]){change(role,value);palette(role,{});}
   return <form className="pp-uniform-editor pp-studio-editor" onSubmit={handleSubmit(async value=>{
@@ -68,10 +68,18 @@ export default function StudioUniformEditor({design:saved,revision,isTeam,editab
         {parts==='pattern'&&<Choices label={view==='front'?'正面の基本柄':'背面の基本柄'} options={STUDIO_PATTERN_CHOICES} value={design[patternKey]} onChange={v=>selectImage(patternKey,v)}/>}
         {parts==='emblem'&&<Choices label="基本エンブレム" options={STUDIO_EMBLEM_CHOICES} value={design.emblem} onChange={v=>selectImage('emblem',v)}/>}
         {personalRewards && !isTeam && parts !== 'model' && <div>
-          <Choices label="宝箱で獲得した素材" options={CHEST_REWARDS.filter(reward => reward.kind === parts && rewardInventory?.rewards.includes(reward.id))
-            .map(reward => [reward.id, reward.name] as const)} value={imageRef} onChange={value => selectImage(imageRole, value)} />
+          {rewardAssets.length > 0 && <div className="pp-uniform-field"><span>宝箱で獲得した素材</span>
+            <div className="pp-uniform-choices pp-studio-many-choices" role="group" aria-label="宝箱で獲得した素材">
+              {rewardAssets.map(reward => <button key={reward.id} type="button"
+                aria-pressed={typeof imageRef === 'string' ? imageRef === reward.builtin_code
+                  : imageRef.id === reward.asset?.id && imageRef.revision === reward.asset?.revision}
+                onClick={() => { const value = reward.asset ?? reward.builtin_code; if (value) selectImage(imageRole, value); }}>
+                {reward.name}
+              </button>)}
+            </div>
+          </div>}
           {rewardError && <p role="status">宝箱の素材を読み込めませんでした。ユニフォーム画面を開き直してください。</p>}
-          {rewardInventory && !CHEST_REWARDS.some(reward => reward.kind === parts && rewardInventory.rewards.includes(reward.id)) && <p>まだ獲得した素材はありません。</p>}
+          {rewardInventory && !rewardAssets.length && <p>まだ獲得した素材はありません。</p>}
           {!!rewardInventory?.completion_badges && <p>宝箱の達成記念バッジ {rewardInventory.completion_badges} 個</p>}
         </div>}
         <UniformAssetPicker key={parts} kind={parts} value={parts==='model'?design.model:parts==='pattern'&&typeof design[patternKey]==='object'?design[patternKey] as {id:string;revision:number}:parts==='emblem'&&typeof design.emblem==='object'?design.emblem:undefined}

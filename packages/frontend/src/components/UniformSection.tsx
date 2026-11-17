@@ -182,8 +182,9 @@ export function UniformDesignEditor(props: StudioEditorProps) {
   </div>;
 }
 
-export default function UniformSection({ state, error, onChange, onReload }: {
+export default function UniformSection({ state, error, onChange, onReload, active = true }: {
   state: UniformState | null; error: string; onChange: (update: (value: UniformState) => UniformState) => void; onReload: () => Promise<boolean>;
+  active?: boolean;
 }) {
   const [scope, setScope] = useState<'personal' | 'team'>('personal');
   const [online, setOnline] = useState(navigator.onLine);
@@ -211,7 +212,7 @@ export default function UniformSection({ state, error, onChange, onReload }: {
     {error && <p role="alert" className="pp-uniform-error">{error}</p>}
     {(scope === 'personal' || state.team) && <UniformTemplatePicker editable={online && (scope === 'personal' || !!state.team?.can_edit)} refreshKey={reloadKey}
       onSelect={design => { if (scope === 'personal') setPersonalPreset(design); else if (state.team) setTeamPreset({ teamId: state.team.id, design }); }} />}
-    <div hidden={scope !== 'personal'}><UniformDesignEditor key={`personal-${reloadKey}`} {...state.personal} editable online={online} isTeam={false} personalRewards showPresets={false} selectedPreset={personalPreset}
+    <div hidden={scope !== 'personal'}><UniformDesignEditor key={`personal-${reloadKey}`} {...state.personal} editable online={online} isTeam={false} personalRewards={active} showPresets={false} selectedPreset={personalPreset}
       onSave={async (design, revision) => {
         const next = await savedRevision(await client.api.uniforms.personal.$put({ json: { design, revision } }));
         onChange(current => ({ ...current, personal: { design, revision: next } }));

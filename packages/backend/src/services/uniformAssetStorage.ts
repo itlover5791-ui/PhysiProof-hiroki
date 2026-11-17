@@ -33,6 +33,13 @@ export async function validateUniformReferences(db: D1Database, design: UniformD
     if (!version || version.asset.kind !== kind || (!allowDraft && version.asset.status !== 'published')) {
       throw new UniformAssetError('使用する素材の種類・公開状態・バージョンを確認してください。');
     }
+    if (version.asset.reward_only) {
+      const owned = personalOwner && await db.prepare(`SELECT 1 FROM map_chest_claims
+        WHERE user_id=? AND reward_json IS NOT NULL AND json_extract(reward_json, '$.asset.id')=?
+          AND json_extract(reward_json, '$.asset.revision')=? LIMIT 1`)
+        .bind(personalOwner, ref.id, ref.revision).first();
+      if (!owned) throw new UniformAssetError('個人ユニフォームには獲得済みの宝箱素材を選んでください。');
+    }
   }
   if(design.version===2)for(const role of ['front_pattern','back_pattern','emblem'] as const){
     const colors=design.part_colors?.[role];if(!colors||!Object.keys(colors).length)continue;

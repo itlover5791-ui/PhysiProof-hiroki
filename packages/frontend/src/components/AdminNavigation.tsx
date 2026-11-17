@@ -11,6 +11,7 @@ export const ADMIN_SECTIONS = [
   { id: 'settings', label: 'システム設定', icon: 'settings' },
   { id: 'running-places', label: '通過統計エリア', icon: 'map' },
   { id: 'uniform-templates', label: 'ユニフォーム管理', icon: 'uniform' },
+  { id: 'chest-rewards', label: '宝箱の報酬', icon: 'award' },
   { id: 'api-usage', label: 'API使用状況', icon: 'radio' },
   { id: 'design-docs', label: '設計資料', icon: 'document' },
 ] as const satisfies ReadonlyArray<{ id: string; label: string; icon: AppIconName }>;

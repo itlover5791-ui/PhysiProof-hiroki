@@ -4,6 +4,7 @@ import client from '../lib/hc';
 import { useRunTelemetry } from '../lib/useRunTelemetry';
 import { hasNativeRunBridge, nativeRunCommand } from '../lib/nativeRun';
 import RunningCoursesPanel,{type CompletedCourseDraft} from '../components/RunningCoursesPanel';
+import ChestTitlesSection from '../components/ChestTitlesSection';
 import {runningCourseListSchema,type RunningCourse,type CourseRewardInventory} from '@my-app/shared';
 import { mapChestSchema, personalizeUniform } from '@my-app/shared';
 import type { ActivityMode, MapChest, UniformState, ProfileVitals } from '@my-app/shared';
@@ -260,6 +261,8 @@ const Dashboard: React.FC = () => {
   const [runningChest, setRunningChest] = useState<MapChest | null>(null);
   const [courses,setCourses]=useState<RunningCourse[]>([]),[courseError,setCourseError]=useState(''),[selectedCourse,setSelectedCourse]=useState(''),[runningCourseId,setRunningCourseId]=useState<string|null>(null);
   const [courseDraft,setCourseDraft]=useState<CompletedCourseDraft|null>(null),[courseEquipment,setCourseEquipment]=useState<CourseRewardInventory|null>(null);
+  const [chestTitle, setChestTitle] = useState<string | null>(null);
+  useEffect(() => setChestTitle(null), [currentUser?.uid]);
   async function reloadCourses(){if(!currentUser)return;try{const res=await client.api.running.courses.$get();if(!res.ok)throw new Error('コース一覧を読み込めませんでした。');setCourses(runningCourseListSchema.parse(await res.json()).courses);setCourseError('');}catch(e){setCourseError(e instanceof Error?e.message:'読み込みに失敗しました。');}}
   useEffect(()=>{void reloadCourses();},[currentUser?.uid,isTracking]);
   const motion = useRunTelemetry(runningSessionId,isTracking,state=>{
@@ -1130,6 +1133,7 @@ const Dashboard: React.FC = () => {
                   currentUser={currentUser}
                   courseFrame={!!courseEquipment?.equipped.frame_id}
                   courseTitle={courseEquipment?.equipped.title_id?'いつもの道のランナー':null}
+                  chestTitle={chestTitle}
                   todayMission={todayMission}
                   onNavigateTab={setActiveTab}
                   activityMode={activityMode}
@@ -1165,6 +1169,7 @@ const Dashboard: React.FC = () => {
                   activeUniform={activeUniform}
                 />
                 <RunningCoursesPanel courses={courses} selected={selectedCourse} onSelect={setSelectedCourse} tracking={isTracking} draft={courseDraft} onDraftSaved={()=>setCourseDraft(null)} onReload={()=>void reloadCourses()} userId={currentUser.uid} avatar={getUserAvatarSrc(currentUser.avatar_id,currentUser.avatar_image)} onEquipment={setCourseEquipment} onUniformApplied={()=>void reloadUniforms()} error={courseError}/>
+                <ChestTitlesSection key={currentUser.uid} onEquip={setChestTitle} />
 
                 <RPGStatsSection
                   currentUser={currentUser}
@@ -1175,7 +1180,7 @@ const Dashboard: React.FC = () => {
             )}
 
             <div hidden={activeTab !== 'uniform'}>
-              <UniformSection state={uniformState} error={uniformError} onReload={reloadUniforms}
+              <UniformSection state={uniformState} error={uniformError} onReload={reloadUniforms} active={activeTab === 'uniform'}
                 onChange={update => setUniformState(current => current ? update(current) : current)} />
             </div>
 

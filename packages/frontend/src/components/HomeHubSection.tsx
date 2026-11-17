@@ -46,6 +46,7 @@ interface HomeHubSectionProps {
   showMealMenu?: boolean;
   activeUniform?: UniformDesign | null;
   courseFrame?:boolean;courseTitle?:string|null;
+  chestTitle?: string | null;
 }
 
 const HomeHubSection: React.FC<HomeHubSectionProps> = ({
@@ -65,7 +66,7 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
   nativeStepsAvailable,
   showMealMenu = true,
   activeUniform,
-  courseFrame=false,courseTitle,
+  courseFrame=false,courseTitle,chestTitle,
 }) => {
   const currentWeightVal = currentUser.current_weight || 70;
   const targetWeightVal = currentUser.target_weight || 68;
@@ -316,6 +317,7 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
                 {currentUser.name}
               </h3>
               {courseTitle&&<div style={{color:'#c5e8ff',fontSize:12,marginTop:5}}>{courseTitle}</div>}
+              {chestTitle && <div style={{ color: '#ffda86', fontSize: 12, marginTop: 5 }}>{chestTitle}</div>}
               <div style={{ fontSize: '0.65rem', color: '#8a8a93', marginTop: '4px' }}>
                 XP: {currentXp} / {xpNeeded} XP
               </div>

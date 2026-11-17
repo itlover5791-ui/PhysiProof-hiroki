@@ -24,6 +24,7 @@ import {runningCourseRoutes,profileCourseRoutes,courseRewardRoutes} from './rout
 import {courseRewardStatements} from './services/runningCourses';
 import {externalRunningRoutes} from './routes/externalRunning';
 import { mapChestRoutes } from './routes/mapChests';
+import { adminChestRewardRoutes } from './routes/adminChestRewards';
 import { chestResult, claimChest, readChestTier } from './services/mapChests';
 import { ageBand, territoryMapQuerySchema } from '@my-app/shared';
 import type { R2Bucket, KVNamespace } from '@cloudflare/workers-types';
@@ -111,6 +112,7 @@ app.use('*', cors({
 
 const routes = app
   .route('/map-chests', mapChestRoutes)
+  .route('/admin/chest-rewards', adminChestRewardRoutes)
   .route('/running/external',externalRunningRoutes)
   .route('/running/courses',runningCourseRoutes)
   .route('/running/rewards',courseRewardRoutes)

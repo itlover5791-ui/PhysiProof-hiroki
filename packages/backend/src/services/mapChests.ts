@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { CHEST_MAX_TRACE_POINTS, CHEST_REWARDS, chestResultSchema } from '@my-app/shared';
+import { CHEST_MAX_TRACE_POINTS, CHEST_REWARDS, chestResultSchema, managedChestRewardSchema } from '@my-app/shared';
 import type { ChestResult, ChestTier } from '@my-app/shared';
 import { chestCandidates } from '../data/chestCandidates';
 import { metresBetween, type SpotPosition } from './battleSpots';
@@ -59,20 +59,39 @@ export async function readChestTier(db: D1Database, sessionId: string, chestId: 
 }
 
 export function claimChest(db: D1Database, sessionId: string, userId: string, tier: ChestTier) {
-  const rewards = JSON.stringify(CHEST_REWARDS.filter(reward => reward.tier === tier).map(reward => reward.id));
-  return db.prepare(`INSERT OR IGNORE INTO map_chest_claims (user_id, chest_id, session_id, tier, reward_id)
-    SELECT s.user_id, c.id, s.id, ?, (
-      SELECT value FROM json_each(?) AS prize
-      WHERE NOT EXISTS (SELECT 1 FROM map_chest_claims WHERE user_id=s.user_id AND reward_id=prize.value)
-      ORDER BY random() LIMIT 1
-    )
+  return db.prepare(`WITH prize AS MATERIALIZED (
+    SELECT r.id, json_object('id', r.id, 'name', r.name, 'kind', r.kind, 'tier', r.tier,
+      'builtin_code', r.builtin_code, 'revision', r.revision,
+      'asset', json(CASE WHEN r.asset_id IS NOT NULL THEN json_object('id', r.asset_id, 'revision', r.asset_revision) END),
+      'buff', NULL) AS reward_json
+    FROM chest_reward_catalog r LEFT JOIN uniform_assets a ON a.id=r.asset_id
+    WHERE r.archived=0 AND r.tier=? AND r.kind<>'buff'
+      AND (r.asset_id IS NULL OR (a.status='published' AND a.reward_only=1))
+      AND NOT EXISTS (
+        SELECT 1 FROM map_chest_claims owned WHERE owned.user_id=? AND owned.reward_id=r.id
+      )
+    ORDER BY random() LIMIT 1
+  )
+    INSERT OR IGNORE INTO map_chest_claims (user_id, chest_id, session_id, tier, reward_id, reward_json)
+    SELECT s.user_id, c.id, s.id, ?, prize.id, prize.reward_json
     FROM running_sessions s JOIN map_chests c ON c.id=s.chest_id
+    LEFT JOIN prize ON 1=1
     WHERE s.id=? AND s.user_id=? AND s.status='completed' AND s.activity_mode='personal' AND s.distance_m>0
-      AND (julianday(s.completed_at)-2440587.5)*86400000<c.expires_at`).bind(tier, rewards, sessionId, userId);
+      AND (julianday(s.completed_at)-2440587.5)*86400000<c.expires_at`).bind(tier, userId, tier, sessionId, userId);
+}
+
+export function acquiredChestReward(row: { reward_id: string | null; reward_json: string | null }) {
+  if (row.reward_json) return managedChestRewardSchema.parse(JSON.parse(row.reward_json));
+  // Requests served by the older Worker during migration can still award a built-in.
+  const builtin = CHEST_REWARDS.find(item => item.id === row.reward_id);
+  return builtin ? managedChestRewardSchema.parse({ ...builtin, revision: 1,
+    asset: null, buff: null, builtin_code: builtin.id }) : null;
 }
 
 export async function chestResult(db: D1Database, userId: string, sessionId: string): Promise<ChestResult | null> {
-  const row = await db.prepare('SELECT tier, reward_id FROM map_chest_claims WHERE user_id=? AND session_id=?')
-    .bind(userId, sessionId).first();
-  return row ? chestResultSchema.parse(row) : null;
+  const row = await db.prepare('SELECT tier, reward_id, reward_json FROM map_chest_claims WHERE user_id=? AND session_id=?')
+    .bind(userId, sessionId).first<{ tier: string; reward_id: string | null; reward_json: string | null }>();
+  if (!row) return null;
+  const reward = acquiredChestReward(row);
+  return chestResultSchema.parse({ tier: row.tier, reward_id: row.reward_id, ...(reward ? { reward } : {}) });
 }

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
-import { createStudioUniform, type ChestResult } from '@my-app/shared';
+import { createStudioUniform, type ChestResult, type SaveChestReward } from '@my-app/shared';
 import app from './index';
 import { issueSession } from './services/authSession';
 import { chestTierForTrace } from './services/mapChestGeometry';
@@ -195,5 +195,65 @@ sqlSuite('shared chest placement and private rewards on real SQL', () => {
     const expired = addChest('JP-13', clock - 1);
     expect((await request('/running/sessions', 'POST', { activity_mode: 'personal', chest_id: expired })).status).toBe(409);
     expect((await request('/running/sessions', 'POST', { activity_mode: 'team', chest_id: expired })).status).toBe(400);
+  });
+
+  it('lets admins manage title and buff definitions, excludes buffs from personal draws, and preserves awarded titles', async () => {
+    const admin = '/admin/chest-rewards';
+    sql("UPDATE users SET role='admin' WHERE id=?", users[1]);
+    const title: SaveChestReward = { name: '夜明けの走者', kind: 'title', tier: 'medium', revision: 0, asset: null, builtin_code: null, buff: null };
+    expect((await request(admin, 'GET', undefined, -1)).status).toBe(401);
+    expect((await request(admin, 'POST', title, 0)).status).toBe(403);
+    for (const id of ['chest-compass', 'chest-switchback']) {
+      expect((await request(`${admin}/${id}`, 'DELETE', { revision: 1 }, 1)).status).toBe(200);
+    }
+    const buff = { ...title, name: '小さな追い風', kind: 'buff', buff: { boost_percent: 10, duration_minutes: 15 } };
+    expect((await request(admin, 'POST', { ...buff, buff: { duration_minutes: 15, boost_percent: 99 } }, 1)).status).toBe(400);
+    const buffSaved = await request(admin, 'POST', buff, 1);
+    expect(buffSaved.status).toBe(201);
+    const { id: buffId } = await buffSaved.json() as { id: string };
+    expect((await request(`${admin}/${buffId}`, 'PUT', { ...buff, revision: 1, buff: { boost_percent: 12, duration_minutes: 10 } }, 1)).status).toBe(200);
+    const created = await request(admin, 'POST', title, 1);
+    expect(created.status).toBe(201);
+    const { id } = await created.json() as { id: string };
+    expect((await request('/map-chests/title', 'PUT', { reward_id: id })).status).toBe(403);
+    const session = await start(addChest(), 0);
+    await sendTrace(session, 0);
+    expect(await finish(session, 0)).toMatchObject({ tier: 'medium', reward_id: id, reward: { kind: 'title', name: title.name } });
+    expect((await request(`${admin}/${id}`, 'PUT', { ...title, name: '新しい称号', revision: 1 }, 1)).status).toBe(200);
+    expect((await request(`${admin}/${id}`, 'DELETE', { revision: 1 }, 1)).status).toBe(409);
+    expect((await request(`${admin}/${id}`, 'DELETE', { revision: 2 }, 1)).status).toBe(200);
+    expect((await request(`${admin}/${buffId}`, 'DELETE', { revision: 2 }, 1)).status).toBe(200);
+    expect((await request('/map-chests/title', 'PUT', { reward_id: id })).status).toBe(200);
+    expect((await request('/map-chests/title', 'PUT', { reward_id: id }, 1)).status).toBe(403);
+    const inventory = await request('/map-chests/rewards');
+    expect(await inventory.json()).toMatchObject({ equipped_title: id, items: [{ name: title.name }] });
+    const next = await start(addChest(), 0);
+    await sendTrace(next, 0);
+    expect(await finish(next, 0)).toEqual({ tier: 'medium', reward_id: null });
+  });
+
+  it('awards a pinned asset revision and permits only its owner to save it after reward deletion', async () => {
+    sql("UPDATE users SET role='admin' WHERE id=?", users[1]);
+    sql("UPDATE chest_reward_catalog SET archived=1 WHERE tier='medium'");
+    const asset = { id: randomUUID(), revision: 1 };
+    sql("INSERT INTO uniform_assets(id,kind,name,category,status,revision,reward_only) VALUES(?,'emblem','Badge','Chest','published',1,1)", asset.id);
+    sql('INSERT INTO uniform_asset_versions(asset_id,revision,metadata_json) VALUES(?,?,?)', asset.id, asset.revision, JSON.stringify({
+      ...asset, kind: 'emblem', name: 'Badge', category: 'Chest', description: '', status: 'published', sort_order: 0, builtin: false,
+      width: 32, height: 32, color_mode: 'original', placement: 'all', scale: 100, model_definition: null,
+      image_path: null, thumbnail_path: null, drawing_available: false, reward_only: true,
+    }));
+    const reward: SaveChestReward = { name: '限定ロゴ', kind: 'emblem', tier: 'medium', revision: 0, asset, builtin_code: null, buff: null };
+    expect((await request('/admin/chest-rewards', 'POST', { ...reward, kind: 'pattern' }, 1)).status).toBe(409);
+    const created = await request('/admin/chest-rewards', 'POST', reward, 1);
+    expect(created.status).toBe(201);
+    const { id } = await created.json() as { id: string };
+    const design = { ...createStudioUniform(), emblem: asset };
+    expect((await request('/uniforms/personal', 'PUT', { design, revision: 0 })).status).toBe(400);
+    const session = await start(addChest(), 0);
+    await sendTrace(session, 0);
+    expect(await finish(session, 0)).toMatchObject({ reward: { name: reward.name, asset } });
+    expect((await request(`/admin/chest-rewards/${id}`, 'DELETE', { revision: 1 }, 1)).status).toBe(200);
+    expect((await request('/uniforms/personal', 'PUT', { design, revision: 0 }, 1)).status).toBe(400);
+    expect((await request('/uniforms/personal', 'PUT', { design, revision: 0 })).status).toBe(200);
   });
 });

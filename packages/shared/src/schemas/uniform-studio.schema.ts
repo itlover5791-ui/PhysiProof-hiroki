@@ -91,6 +91,7 @@ export const uniformAssetMetadataSchema = z.object({
   name: z.string().trim().min(1).max(60), category: z.string().trim().min(1).max(30),
   description: z.string().trim().max(160), status: z.enum(['draft', 'published', 'hidden']),
   sort_order: z.number().int().min(0).max(999999), revision: z.number().int().min(0),
+  reward_only: z.boolean().optional(),
 });
 const png = z.string().startsWith('data:image/png;base64,');
 const imagePayload = uniformAssetMetadataSchema.extend({
@@ -105,6 +106,9 @@ export const saveUniformAssetSchema = z.discriminatedUnion('kind', [
   imagePayload.extend({ kind: z.literal('pattern') }).strict(),
   imagePayload.extend({ kind: z.literal('emblem') }).strict(),
 ]).superRefine((asset, ctx) => {
+  if (asset.kind === 'model' && asset.reward_only) {
+    ctx.addIssue({ code: 'custom', message: '宝箱専用素材は柄とエンブレムです。' });
+  }
   if (asset.kind !== 'model' && asset.drawing_source && (asset.drawing_source.document.kind !== asset.kind
     || new TextEncoder().encode(JSON.stringify(asset.drawing_source)).length > UNIFORM_SOURCE_MAX_BYTES)) {
     ctx.addIssue({ code: 'custom', message: '素材と原稿の種類・サイズが一致しません。' });
@@ -132,7 +136,10 @@ export const uniformAssetQuerySchema = z.object({
   search: z.string().trim().max(80).default(''), category: z.string().trim().max(30).default(''),
   page: z.string().regex(/^[1-9]\d{0,4}$/).default('1'), limit: z.enum(['12', '24']).default('12'),
 });
-export const adminUniformAssetQuerySchema = uniformAssetQuerySchema.extend({ status: z.enum(['all', 'draft', 'published', 'hidden']).default('all') });
+export const adminUniformAssetQuerySchema = uniformAssetQuerySchema.extend({
+  status: z.enum(['all', 'draft', 'published', 'hidden']).default('all'),
+  reward_only: z.enum(['true']).optional(),
+});
 export const uniformStorageStatusSchema = z.object({
   provider: z.enum(['kv','r2','unconfigured']),
   used_bytes: z.number().int().nonnegative(),

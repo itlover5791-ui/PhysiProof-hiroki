@@ -61,11 +61,20 @@ async function create(payload:unknown=modelPayload){const res=await request('/ap
   beforeEach(async()=>{
     native=new SQLite!(':memory:');native.exec('PRAGMA foreign_keys=ON');
     const dir=fileURLToPath(new URL('../migrations/',import.meta.url));
-    for(const file of readdirSync(dir).filter(f=>/^\d{4}.*\.sql$/.test(f)&&Number(f.slice(0,4))<=35).sort())native.exec(readFileSync(dir+'/'+file,'utf8'));
+    for(const file of readdirSync(dir).filter(f=>/^\d{4}.*\.sql$/.test(f)).sort())native.exec(readFileSync(dir+'/'+file,'utf8'));
     native.exec("INSERT INTO users(id,login_id,password_hash,name,role) VALUES('admin','fixture-admin','fixture-password','Admin','admin'),('user','fixture-user','fixture-password','User','user'),('leader','fixture-leader','fixture-password','Leader','user'); INSERT INTO teams(id,name,owner_id) VALUES('team','fixture team','leader'); UPDATE users SET team_id='team' WHERE id IN ('leader','user')");
     db=new MemoryDB(native);bucket=new MemoryBucket();kv=new MemoryKV();useKv=false;token=await issueUniformAdminSession(db as unknown as D1Database,'admin');
   });
   afterEach(()=>native.close());
+  it('lists reward-only uploads for admins and keeps them out of the ordinary studio catalogue', async () => {
+    const asset = await create({ ...imagePayload, reward_only: true });
+    const normal = await request('/api/uniform-assets?kind=pattern', 'GET', undefined, 'user');
+    expect((await normal.json()).items).toEqual([]);
+    const admin = await request('/api/admin/uniform-assets?kind=pattern&reward_only=true&status=published');
+    expect((await admin.json()).items).toMatchObject([{ id: asset.id, reward_only: true }]);
+    const change = await request(`/api/admin/uniform-assets/${asset.id}`, 'PUT', { ...imagePayload, revision: 1 });
+    expect(change.status).toBe(400);
+  });
   const regions=()=>({version:1 as const,width:2,height:2,parts:[{id:'part-1',name:'左',color:'#ff0000'},{id:'part-2',name:'右',color:'#ff0000'}],labels_base64:encodeRegionLabels(new Uint8Array([1,2,1,0]))});
   it.each([false,true])('persists same-color independent regions without exposing drawing originals (KV=%s)',async kvMode=>{
     useKv=kvMode;

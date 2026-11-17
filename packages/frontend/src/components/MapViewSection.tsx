@@ -815,10 +815,10 @@ export const MapView: React.FC<MapViewProps> = ({
           const result = chestResultSchema.safeParse('chest' in data ? data.chest : null);
           if (result.success) {
             const tier = CHEST_TIERS.find(item => item.id === result.data.tier)?.label;
-            const name = CHEST_REWARDS.find(item => item.id === result.data.reward_id)?.name;
+            const reward = result.data.reward ?? CHEST_REWARDS.find(item => item.id === result.data.reward_id);
             setClaimedChestIds(ids => [...ids, runningChest.id]);
             setSelectedChest(null);
-            setChestMessage(name ? `宝箱（${tier}）から「${name}」を獲得。個人ユニフォーム工房で使えます。`
+            setChestMessage(reward ? `宝箱（${tier}）から「${reward.name}」を獲得。${reward.kind === 'title' ? 'ホームで称号を選べます。' : '個人ユニフォーム工房で使えます。'}`
               : `宝箱（${tier}）を開け、達成記念バッジを獲得しました。`);
           } else {
             setChestMessage('今回は宝箱を獲得できませんでした。入れ替え時刻と、黄色い円を囲んで一周したかを確認してください。');

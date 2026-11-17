@@ -16,10 +16,12 @@ type Env = { Bindings:{DB:D1Database}&UniformStorageBindings;Variables:{firebase
 const validation = (result:{success:boolean},c:{json:(value:{error:string},status:400)=>Response}) => !result.success ? c.json({error:'素材の入力内容を確認してください。'},400) : undefined;
 const handleError = (e:unknown) => e instanceof UniformAssetError ? e : new UniformAssetError('素材の読み込み・保存に失敗しました。',503);
 
-async function list(db:D1Database,q:{kind:string;search:string;category:string;page:string;limit:string;status?:string},admin:boolean,env:UniformStorageBindings) {
-  const builtin = BUILTIN_UNIFORM_MODELS.filter(a => a.kind===q.kind && (!q.search || (a.name+a.description).toLowerCase().includes(q.search.toLowerCase()))
+async function list(db:D1Database,q:{kind:string;search:string;category:string;page:string;limit:string;status?:string;reward_only?:'true'},admin:boolean,env:UniformStorageBindings) {
+  const builtin = BUILTIN_UNIFORM_MODELS.filter(a => !q.reward_only && a.kind===q.kind && (!q.search || (a.name+a.description).toLowerCase().includes(q.search.toLowerCase()))
     && (!q.category || a.category===q.category) && (!admin || q.status==='all' || q.status==='published'));
   const conditions = ['a.kind=?'], args:(string|number)[]=[q.kind];
+  const visibility = !admin ? 'reward_only=0' : q.reward_only ? 'reward_only=1' : '';
+  if (visibility) conditions.push('a.' + visibility);
   if (!admin || q.status!=='all') { conditions.push('a.status=?'); args.push(admin?q.status!:'published'); }
   if (q.search) { conditions.push('(instr(lower(a.name),lower(?))>0 OR instr(lower(a.description),lower(?))>0)'); args.push(q.search,q.search); }
   if (q.category) { conditions.push('a.category=?'); args.push(q.category); }
@@ -27,7 +29,8 @@ async function list(db:D1Database,q:{kind:string;search:string;category:string;p
   const leading=builtin.slice(offset,offset+limit), dbOffset=Math.max(0,offset-builtin.length), remaining=limit-leading.length;
   const count=await db.prepare(`SELECT COUNT(*) AS n FROM uniform_assets a WHERE ${where}`).bind(...args).first<{n:number}>();
   const rows=remaining?await db.prepare(`SELECT v.metadata_json,a.status FROM uniform_assets a JOIN uniform_asset_versions v ON v.asset_id=a.id AND v.revision=a.revision WHERE ${where} ORDER BY a.sort_order,a.name,a.id LIMIT ? OFFSET ?`).bind(...args,remaining,dbOffset).all<{metadata_json:string;status:string}>():{results:[]};
-  const categories=await db.prepare(`SELECT DISTINCT category FROM uniform_assets WHERE kind=? ${admin?'':"AND status='published'"} ORDER BY category`).bind(q.kind).all<{category:string}>();
+  const categories=await db.prepare(`SELECT DISTINCT category FROM uniform_assets WHERE kind=?
+    ${visibility ? 'AND ' + visibility : ''} ${admin?'':"AND status='published'"} ORDER BY category`).bind(q.kind).all<{category:string}>();
   return {items:[...leading,...rows.results.map(r=>uniformAssetSchema.parse({...JSON.parse(r.metadata_json),status:r.status}))],
     total:(count?.n??0)+builtin.length,categories:[...new Set([...builtin.map(a=>a.category),...categories.results.map(r=>r.category)])],storage_ready:storageProvider(env)!=='unconfigured',storage:await uniformStorageStatus(db,env)};
 }
@@ -107,8 +110,10 @@ export const adminUniformAssetRoutes=new Hono<Env>()
 
 async function save(db:D1Database,env:UniformStorageBindings,userId:string,id:string,data:SaveUniformAsset):Promise<UniformAsset> {
   if(!/^[a-f0-9-]{36}$/.test(id))throw new UniformAssetError('追加素材のIDが不正です。');
-  const current=await db.prepare('SELECT kind,revision FROM uniform_assets WHERE id=?').bind(id).first<{kind:string;revision:number}>();
+  const current=await db.prepare('SELECT kind,revision,reward_only FROM uniform_assets WHERE id=?').bind(id).first<{kind:string;revision:number;reward_only:number}>();
   if(current ? current.revision!==data.revision || current.kind!==data.kind : data.revision!==0)throw new UniformAssetError('別の画面で変更されています。最新の素材を読み直してください。',409);
+  const rewardOnly = !!data.reward_only;
+  if (current && !!current.reward_only !== rewardOnly) throw new UniformAssetError('宝箱専用かどうかは新規素材の登録時に選んでください。');
   const usage=await db.prepare("SELECT COALESCE(SUM(byte_size),0) AS bytes,SUM(CASE WHEN created_at>=date('now') THEN 1 ELSE 0 END) AS today FROM uniform_asset_versions").first<{bytes:number;today:number}>();
   if((usage?.today??0)>=300)throw new UniformAssetError('1日の素材更新上限に達しました。翌日に再試行してください。',413);
   const prefix=storagePrefix(env,id), revision=data.revision+1;
@@ -134,6 +139,7 @@ async function save(db:D1Database,env:UniformStorageBindings,userId:string,id:st
         await putStorageObject(env,keys.source,sourceText,'application/json');uploaded.push(keys.source);}
     }
     const asset:UniformAsset={id,kind:data.kind,name:data.name,category:data.category,description:data.description,status:data.status,sort_order:data.sort_order,revision,builtin:false,width,height,
+      ...(rewardOnly ? { reward_only: true } : {}),
       color_mode:data.kind==='model'?'original':data.color_mode,placement:data.kind==='model'?'all':data.placement,scale:data.kind==='model'?100:data.scale,
       model_definition:data.kind==='model'?data.model_definition:null,
       image_path:keys.image?`/api/uniform-assets/${id}/versions/${revision}/image/full`:null,
@@ -141,8 +147,8 @@ async function save(db:D1Database,env:UniformStorageBindings,userId:string,id:st
       ...(data.kind!=='model'&&data.color_regions?{color_regions:uniformRegionSummary(data.color_regions)}:{})};
     const role="EXISTS(SELECT 1 FROM users WHERE id=? AND role='admin')";
     const results=await db.batch([
-      db.prepare(`INSERT INTO uniform_assets(id,kind,name,category,description,status,sort_order,revision) SELECT ?,?,?,?,?,?,?,0 WHERE ?=0 AND ${role} ON CONFLICT(id) DO NOTHING`)
-        .bind(id,data.kind,data.name,data.category,data.description,data.status,data.sort_order,data.revision,userId),
+      db.prepare(`INSERT INTO uniform_assets(id,kind,name,category,description,status,sort_order,revision,reward_only) SELECT ?,?,?,?,?,?,?,0,? WHERE ?=0 AND ${role} ON CONFLICT(id) DO NOTHING`)
+        .bind(id,data.kind,data.name,data.category,data.description,data.status,data.sort_order,rewardOnly?1:0,data.revision,userId),
       db.prepare(`INSERT INTO uniform_asset_versions(asset_id,revision,metadata_json,image_key,thumbnail_key,source_key,byte_size) SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM uniform_assets WHERE id=? AND revision=? AND kind=?) AND ${role}`)
         .bind(id,revision,JSON.stringify(asset),keys.image,keys.thumbnail,keys.source,bytes,id,data.revision,data.kind,userId),
       db.prepare(`UPDATE uniform_assets SET name=?,category=?,description=?,status=?,sort_order=?,revision=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND revision=? AND ${role}`)

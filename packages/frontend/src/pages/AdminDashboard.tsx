@@ -8,6 +8,7 @@ import { DASHBOARD_MENUS } from '../lib/dashboardMenus';
 import { ACHIEVEMENT_DEFINITIONS } from '@my-app/shared';
 import AdminUniformWorkspace from '../components/AdminUniformWorkspace';
 import AdminNavigation, { ADMIN_SECTIONS, type AdminSection } from '../components/AdminNavigation';
+import AdminChestRewards from '../components/AdminChestRewards';
 import AdminTableScroll from '../components/AdminTableScroll';
 import RunningPlaceAdmin from '../components/RunningPlaceAdmin';
 import AppIcon, { LegacyIcon, type AppIconName } from '../components/AppIcon';
@@ -294,8 +295,10 @@ const AdminMapView: React.FC<AdminMapViewProps> = ({ territories, users }) => {
 };
 
 const AdminDashboard: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<AdminSection>(() =>
-    new URLSearchParams(window.location.search).get('tab') === 'uniform-templates' ? 'uniform-templates' : 'summary');
+  const [activeTab, setActiveTab] = useState<AdminSection>(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    return ADMIN_SECTIONS.find(section => section.id === tab)?.id ?? 'summary';
+  });
   const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [territories, setTerritories] = useState<AdminTerritory[]>([]);
@@ -923,6 +926,7 @@ const AdminDashboard: React.FC = () => {
           <h2><AppIcon name={ADMIN_SECTIONS.find(section => section.id === activeTab)!.icon} />{ADMIN_SECTIONS.find(section => section.id === activeTab)!.label}</h2>
         </div>
         <div hidden={activeTab !== 'uniform-templates'}><AdminUniformWorkspace /></div>
+        {activeTab === 'chest-rewards' && <AdminChestRewards />}
         {activeTab === 'running-places' && <RunningPlaceAdmin/>}
         {/* SUMMARY TAB */}
         {activeTab === 'summary' && summary && (

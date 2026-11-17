@@ -63,7 +63,7 @@ export default function AdminUniformAssets(){
   async function begin(asset?:UniformAsset,clone=false) {
     if(authRequired||!catalog||!mayDiscard())return;setMessage('');setLoading(true);setOpen(true);setPng('');setSource(undefined);setColorRegions(undefined);setRegionKey(n=>n+1);setDirty(false);
     setEditing(asset&&!clone&&!asset.builtin?asset:undefined);
-    reset(asset?{name:clone||asset.builtin?asset.name+' コピー':asset.name,category:asset.category,description:asset.description,status:clone||asset.builtin?'draft':asset.status,sort_order:asset.sort_order,revision:clone||asset.builtin?0:asset.revision}:empty);
+    reset(asset?{name:clone||asset.builtin?asset.name+' コピー':asset.name,category:asset.category,description:asset.description,status:clone||asset.builtin?'draft':asset.status,sort_order:asset.sort_order,revision:clone||asset.builtin?0:asset.revision,reward_only:!!asset.reward_only}:empty);
     setColorMode(asset?.color_mode||'original');setPlacement(asset?.placement||'body');setScale(asset?.scale||100);
     setModelJson(modelFile(asset?.model_definition||BUILTIN_UNIFORM_MODELS[0].model_definition!));
     try{
@@ -130,6 +130,9 @@ export default function AdminUniformAssets(){
           <label>素材名<input {...register('name')} maxLength={60}/></label><label>カテゴリ<input {...register('category')} maxLength={30}/></label>
           <label>説明<textarea {...register('description')} maxLength={160}/></label>
           <label>公開状態<select {...register('status')}><option value="draft">下書き</option><option value="published">公開中</option><option value="hidden">非表示</option></select></label>
+          {kind !== 'model' && (editing
+            ? (editing.reward_only && <small>宝箱専用素材</small>)
+            : <label><span><input type="checkbox" {...register('reward_only')} /> 宝箱専用素材にする</span></label>)}
           <label>表示順<input type="number" {...register('sort_order',{valueAsNumber:true})} min="0" max="999999"/></label>
           {kind==='model'?<>
             <InfoHint label="モデル定義とは" text="シャツの外形・袖・襟・縫い目を正面／背面のSVG座標で定義した、服本体の設計データです。新しい服の形を追加するための上級者向け機能で、柄・エンブレムの追加や部位別カラーには不要です。通常は標準モデルを選ぶだけで使えます。"/>
