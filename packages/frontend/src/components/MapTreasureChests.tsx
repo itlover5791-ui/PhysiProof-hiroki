@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { CHEST_INNER_MARGIN_M, CHEST_TIERS, mapChestsSchema } from '@my-app/shared';
-import type { MapChest } from '@my-app/shared';
+import type { ChestTier, MapChest } from '@my-app/shared';
 import client from '../lib/hc';
 import InfoHint from './InfoHint';
 import './MapTreasureChests.css';
@@ -12,9 +12,10 @@ type Props = {
   onSelect: (chest: MapChest | null) => void;
   disabled: boolean;
   claimedIds: string[];
+  previewTier: ChestTier | null;
 };
 
-export default function MapTreasureChests({ map, selected, onSelect, disabled, claimedIds }: Props) {
+export default function MapTreasureChests({ map, selected, onSelect, disabled, claimedIds, previewTier }: Props) {
   const [catalog, setCatalog] = useState<ReturnType<typeof mapChestsSchema.parse>>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -66,20 +67,24 @@ export default function MapTreasureChests({ map, selected, onSelect, disabled, c
     pins.forEach((chest, index) => {
       const claimed = chest.claimed || claimedIds.includes(chest.id);
       const chosen = selected?.id === chest.id;
+      const preview = chosen && !claimed ? CHEST_TIERS.find(tier => tier.id === previewTier) : undefined;
       const latLng: L.LatLngTuple = [chest.latitude, chest.longitude];
-      const label = chosen ? (disabled ? '挑戦中の宝箱' : '選択した宝箱') : `宝箱 ${index + 1}${claimed ? '（獲得済み）' : ''}`;
+      const label = preview ? `今ここで終了すると「${preview.label}」の見込み`
+        : chosen ? (disabled ? '挑戦中の宝箱' : '選択した宝箱') : `宝箱 ${index + 1}${claimed ? '（獲得済み）' : ''}`;
+      const size = preview ? 38 : 32;
       const icon = L.divIcon({
-        className: `pp-chest-pin${chosen ? ' is-selected' : ''}${claimed ? ' is-claimed' : ''}`,
-        html: '<span aria-hidden="true"></span>',
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        className: `pp-chest-pin${chosen ? ' is-selected' : ''}${claimed ? ' is-claimed' : ''}${preview ? ` has-preview is-${preview.id}` : ''}`,
+        html: preview ? `<b aria-hidden="true">${preview.label}</b>` : '<span aria-hidden="true"></span>',
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
       });
       const marker = L.marker(latLng, { icon, title: label, alt: label }).bindTooltip(label).addTo(group);
+      marker.getElement()?.setAttribute('aria-label', label);
       if (!disabled && !claimed) marker.on('click', () => onSelect(chest));
       if (chosen) L.circle(latLng, { radius: CHEST_INNER_MARGIN_M, color: '#ffcb66', fillOpacity: .13, dashArray: '4 3', interactive: false }).addTo(group);
     });
     return () => { group.remove(); };
-  }, [map, chests, selected, disabled, claimedIds, onSelect]);
+  }, [map, chests, selected, disabled, claimedIds, onSelect, previewTier]);
 
   return <section className="pp-map-chests" aria-label="個人マップの宝箱">
     <div className="pp-map-chest-actions">

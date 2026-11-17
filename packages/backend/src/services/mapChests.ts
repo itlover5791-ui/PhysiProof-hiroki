@@ -1,5 +1,5 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import { CHEST_MAX_TRACE_POINTS, CHEST_REWARDS, chestResultSchema, managedChestRewardSchema } from '@my-app/shared';
+import { CHEST_MAX_TRACE_POINTS, CHEST_REWARDS, chestResultSchema, managedChestRewardSchema, runFixSchema } from '@my-app/shared';
 import type { ChestResult, ChestTier } from '@my-app/shared';
 import { chestCandidates } from '../data/chestCandidates';
 import { metresBetween, type SpotPosition } from './battleSpots';
@@ -49,13 +49,42 @@ export async function populateChestWeek(db: D1Database, region: Prefecture, expi
   ]);
 }
 
+function readChestTrace(db: D1Database, sessionId: string, throughSequence = CHEST_MAX_TRACE_POINTS) {
+  return db.prepare(`SELECT latitude, longitude, captured_at FROM running_chest_points
+    WHERE session_id=? AND sequence<=? ORDER BY sequence LIMIT ?`)
+    .bind(sessionId, throughSequence, CHEST_MAX_TRACE_POINTS + 1).all<ChestPoint>();
+}
+
 export async function readChestTier(db: D1Database, sessionId: string, chestId: string) {
   const [chest, trace] = await Promise.all([
     db.prepare('SELECT * FROM map_chests WHERE id=?').bind(chestId).first<ChestRow>(),
-    db.prepare(`SELECT latitude, longitude, captured_at FROM running_chest_points
-      WHERE session_id=? ORDER BY sequence LIMIT ?`).bind(sessionId, CHEST_MAX_TRACE_POINTS + 1).all<ChestPoint>(),
+    readChestTrace(db, sessionId),
   ]);
   return chest ? chestTierForTrace(trace.results, chest) : null;
+}
+
+export async function readChestPreview(db: D1Database, sessionId: string, userId: string) {
+  const active = await db.prepare(`SELECT c.latitude,c.longitude,c.expires_at,m.sequence,m.received_at_ms,m.last_fix_json
+    FROM running_sessions s JOIN map_chests c ON c.id=s.chest_id
+    JOIN running_motion m ON m.session_id=s.id
+    WHERE s.id=? AND s.user_id=? AND s.activity_mode='personal' AND s.status='active'
+      AND c.expires_at>? AND m.sequence BETWEEN 0 AND ?
+      AND julianday(s.last_heartbeat_at)>=julianday('now','-90 seconds')`)
+    .bind(sessionId, userId, Date.now(), CHEST_MAX_TRACE_POINTS)
+    .first<SpotPosition & { expires_at: number; sequence: number; received_at_ms: number; last_fix_json: string | null }>();
+  if (!active?.last_fix_json) return null;
+
+  const parsed = runFixSchema.safeParse(JSON.parse(active.last_fix_json));
+  if (!parsed.success) return null;
+  const fix = parsed.data;
+  const now = Date.now();
+  const validUntil = Math.min(active.expires_at, active.received_at_ms + 15000, fix.captured_at_ms + 15000);
+  if (validUntil <= now || fix.captured_at_ms > now + 5000 || fix.mocked || fix.accuracy_m <= 0 || fix.accuracy_m > 30) return null;
+
+  const trace = await readChestTrace(db, sessionId, active.sequence);
+  const tier = chestTierForTrace(trace.results, active, fix);
+  const validForMs = validUntil - Date.now();
+  return tier && validForMs > 0 ? { tier, valid_for_ms: validForMs } : null;
 }
 
 export function claimChest(db: D1Database, sessionId: string, userId: string, tier: ChestTier) {

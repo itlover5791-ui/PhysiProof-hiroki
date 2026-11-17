@@ -51,3 +51,38 @@
 }
 .pp-chest-pin.is-selected { border-color: #fff; background: #ffab39; }
 .pp-chest-pin.is-claimed { background: #a5a99f; }
+.pp-chest-pin.has-preview {
+  border-color: var(--chest-tier-color);
+  background: #211a15 var(--chest-art) center / 30px 30px no-repeat;
+}
+.pp-chest-pin.has-preview b {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border: 1px solid #211a15;
+  border-radius: 5px;
+  background: var(--chest-tier-color);
+  color: #211a15;
+  font-size: 11px;
+  line-height: 1;
+}
+.pp-chest-pin.is-small, .pp-chest-estimate.is-small { --chest-tier-color: #ffc28d; }
+.pp-chest-pin.is-medium, .pp-chest-estimate.is-medium { --chest-tier-color: #bbd8f9; }
+.pp-chest-pin.is-large, .pp-chest-estimate.is-large { --chest-tier-color: #ffe078; }
+.pp-chest-pin.is-small { --chest-art: url('../assets/chest-pins/small.svg'); }
+.pp-chest-pin.is-medium { --chest-art: url('../assets/chest-pins/medium.svg'); }
+.pp-chest-pin.is-large { --chest-art: url('../assets/chest-pins/large.svg'); }
+.pp-chest-estimate {
+  margin: 1rem 0 0;
+  padding: .65rem .85rem;
+  border: 1px solid var(--chest-tier-color);
+  border-radius: 10px;
+  background: #211a15;
+  color: #fff5df;
+  font-size: .9rem;
+}
+.pp-chest-estimate strong { color: var(--chest-tier-color); }

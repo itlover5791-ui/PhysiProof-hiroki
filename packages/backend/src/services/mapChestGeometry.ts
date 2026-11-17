@@ -46,7 +46,7 @@ function crossesItself(points: SpotPosition[], origin: SpotPosition) {
   return false;
 }
 
-export function chestTierForTrace(rows: ChestPoint[], chest: SpotPosition): ChestTier | null {
+export function chestTierForTrace(rows: ChestPoint[], chest: SpotPosition, currentPosition?: SpotPosition): ChestTier | null {
   if (rows.length > CHEST_MAX_TRACE_POINTS) return null;
   let points: SpotPosition[] = [], lastAt = 0;
   for (const row of rows) {
@@ -54,8 +54,10 @@ export function chestTierForTrace(rows: ChestPoint[], chest: SpotPosition): Ches
     lastAt = row.captured_at;
     if (row.latitude !== null && row.longitude !== null) points.push({ latitude: row.latitude, longitude: row.longitude });
   }
-  if (points.length < 6 || metresBetween(points[0], points[points.length - 1]) > 25) return null;
-  if (metresBetween(points[0], points[points.length - 1]) < 1) points.pop();
+  if (points.length < 6) return null;
+  const closingDistance = metresBetween(points[0], points[points.length - 1]);
+  if (closingDistance > 25 || (currentPosition && metresBetween(points[0], currentPosition) > 25)) return null;
+  if (closingDistance < 1) points.pop();
   const metrics = loopMetrics(points, chest);
   if (!metrics.inside || metrics.clearance < CHEST_INNER_MARGIN_M || crossesItself(points, chest)) return null;
   return [...CHEST_TIERS].reverse().find(tier => metrics.area >= tier.area)?.id ?? null;

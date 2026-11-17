@@ -86,11 +86,11 @@ sqlSuite('shared chest placement and private rewards on real SQL', () => {
     expect(response.status).toBe(200);
     return (await response.json() as { chest: ChestResult | null }).chest;
   }
-  async function sendTrace(session: string, user: number, points = loop(85)) {
-    for (const [sequence, p] of points.entries()) {
+  async function sendTrace(session: string, user: number, points = loop(85), startSequence = 0) {
+    for (const [index, p] of points.entries()) {
       clock += 10000;
       const response = await request(`/running/sessions/${session}/telemetry`, 'POST', {
-        sequence, recorded_at_ms: clock, source: 'unavailable', steps: null,
+        sequence: startSequence + index, recorded_at_ms: clock, source: 'unavailable', steps: null,
         fix: { latitude: p.latitude, longitude: p.longitude, accuracy_m: 6, captured_at_ms: clock, mocked: false },
       }, user);
       expect(response.status).toBe(200);
@@ -122,6 +122,50 @@ sqlSuite('shared chest placement and private rewards on real SQL', () => {
     vi.spyOn(Date, 'now').mockImplementation(() => clock);
   });
   afterEach(() => { vi.restoreAllMocks(); sqlite.close(); });
+
+  it('previews only the owner’s live closed loop and awards the same tier on completion', async () => {
+    const target = addChest();
+    const run = await start(target, 0);
+    const path = `/map-chests/sessions/${run}/preview`;
+    const preview = async (user = 0) => {
+      const response = await request(path, 'GET', undefined, user);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Cache-Control')).toContain('no-store');
+      return response.json();
+    };
+    const points = loop(85);
+    await sendTrace(run, 0, points.slice(0, 22));
+    expect(await preview()).toEqual({ preview: null });
+    await sendTrace(run, 0, points.slice(22), 22);
+    expect(await preview()).toEqual({ preview: { tier: 'medium', valid_for_ms: 15000 } });
+    expect(await preview(1)).toEqual({ preview: null });
+    expect((await request(path, 'GET', undefined, -1)).status).toBe(401);
+    expect(one('SELECT COUNT(*) n FROM map_chest_claims')?.n).toBe(0);
+    expect(await finish(run, 0)).toMatchObject({ tier: 'medium' });
+    expect(await preview()).toEqual({ preview: null });
+  });
+
+  it('withdraws the preview when the fix gets stale, the runner leaves the loop, or the chest expires', async () => {
+    const run = await start(addChest(), 0);
+    const path = `/map-chests/sessions/${run}/preview`;
+    const preview = async (pathToPreview = path, user = 0) => (await request(pathToPreview, 'GET', undefined, user)).json();
+    const points = loop(85);
+    await sendTrace(run, 0, points);
+    clock += 15000;
+    expect(await preview()).toEqual({ preview: null });
+    await sendTrace(run, 0, [points[24]], 25);
+    expect(await preview()).toMatchObject({ preview: { tier: 'medium' } });
+    await sendTrace(run, 0, [{ ...points[24], longitude: points[24].longitude + 0.0004 }], 26);
+    expect(await preview()).toEqual({ preview: null });
+
+    clock = expires - 255000;
+    const otherRun = await start(addChest(), 1);
+    await sendTrace(otherRun, 1, loop(130));
+    const expiring = `/map-chests/sessions/${otherRun}/preview`;
+    expect(await preview(expiring, 1)).toEqual({ preview: { tier: 'large', valid_for_ms: 5000 } });
+    clock += 5000;
+    expect(await preview(expiring, 1)).toEqual({ preview: null });
+  });
 
   it('publishes one saved prefecture draw and permits each account to claim it independently', async () => {
     const target = addChest();

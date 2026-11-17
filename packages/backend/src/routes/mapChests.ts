@@ -1,15 +1,19 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import type { D1Database } from '@cloudflare/workers-types';
-import { chestInventorySchema, chestLocationSchema, equipChestTitleSchema, mapChestsSchema } from '@my-app/shared';
+import { chestInventorySchema, chestLocationSchema, chestPreviewSchema, equipChestTitleSchema, mapChestsSchema } from '@my-app/shared';
 import { firebaseAuth } from '../middleware/auth';
-import { acquiredChestReward, chestWeekEnd, populateChestWeek } from '../services/mapChests';
+import { acquiredChestReward, chestWeekEnd, populateChestWeek, readChestPreview } from '../services/mapChests';
 import { findPrefecture } from '../services/prefectureSpots';
 
 type Env = { Bindings: { DB: D1Database }; Variables: { firebaseUser: { sub: string } } };
 export const mapChestRoutes = new Hono<Env>()
   .use('*', firebaseAuth)
   .use('*', async (c, next) => { await next(); c.header('Cache-Control', 'private, no-store'); })
+  .get('/sessions/:id/preview', async c => {
+    const preview = await readChestPreview(c.env.DB, c.req.param('id'), c.get('firebaseUser').sub);
+    return c.json(chestPreviewSchema.parse({ preview }));
+  })
   .post('/nearby', zValidator('json', chestLocationSchema), async c => {
     const { latitude, longitude } = c.req.valid('json');
     const region = findPrefecture(latitude, longitude);

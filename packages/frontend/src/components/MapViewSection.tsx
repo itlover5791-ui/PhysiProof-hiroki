@@ -18,6 +18,7 @@ import type {CompletedCourseDraft} from './RunningCoursesPanel';
 import { AGE_BANDS } from '@my-app/shared';
 import { loadWorldTerritories } from '../lib/territoryCache';
 import { escapeMapText } from '../lib/mapText';
+import { useChestPreview } from '../lib/useChestPreview';
 
 const toggleButtonStyle = (active: boolean): React.CSSProperties => ({
   backgroundColor: active ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
@@ -147,6 +148,8 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => { active = false; window.clearInterval(interval); };
   }, [mapBattleId, battleRefresh]);
   const [isSaving, setIsSaving] = useState(false);
+  const chestPreviewTier = useChestPreview(isTracking && !isSaving && runningChest ? runningSessionId : null);
+  const chestPreviewLabel = CHEST_TIERS.find(tier => tier.id === chestPreviewTier)?.label;
   const [selectedChest, setSelectedChest] = useState<MapChest | null>(null);
   const [claimedChestIds, setClaimedChestIds] = useState<string[]>([]);
   const [chestMessage, setChestMessage] = useState('');
@@ -1177,7 +1180,8 @@ export const MapView: React.FC<MapViewProps> = ({
       </section>
       {activityMode === 'personal' && <>
         <MapTreasureChests map={mapInstance} selected={isTracking || isSaving ? runningChest ?? null : selectedChest}
-          onSelect={setSelectedChest} disabled={isTracking || isSaving} claimedIds={claimedChestIds} />
+          onSelect={setSelectedChest} disabled={isTracking || isSaving} claimedIds={claimedChestIds}
+          previewTier={chestPreviewTier} />
         {chestMessage && <p className="pp-map-chests" role="status">{chestMessage}</p>}
       </>}
       <div style={{ position: 'relative', width: 'calc(100% + 2rem)', marginLeft: '-1rem', overflow: 'hidden', borderRadius: '16px' }}>
@@ -1409,6 +1413,11 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {onSelectCourse&&<label style={{display:'grid',gap:8,marginTop:16,color:'#c8d7e3',fontSize:14}}>走るコース（任意）<select aria-label="走るコース" value={selectedCourse} onChange={e=>onSelectCourse(e.target.value)} disabled={isTracking||isSaving} style={{width:'100%',minWidth:0,boxSizing:'border-box',fontSize:16,minHeight:46,padding:10,border:'1px solid #425c70',borderRadius:8,background:'#122332',color:'#fff'}}><option value="">選択しない</option>{courses.map(c=><option key={c.id} value={c.id}>{c.name} · {c.laps}周</option>)}</select>{!!selectedCourse&&<small>走行中のGPSをコースと照合します。位置統計の同意とは別です。</small>}</label>}
       {courseDraft&&onOpenCourses&&<button type="button" onClick={onOpenCourses} disabled={isSaving} style={{minHeight:44,marginTop:12,width:'100%',padding:10,border:'1px solid #425c70',background:'#122332',color:'#bff440',borderRadius:10}}>今回の走行をコースとして保存・周回と報酬を見る</button>}
+      {isTracking && !isSaving && runningChest && <div role="status">
+        {chestPreviewLabel && <p className={`pp-chest-estimate is-${chestPreviewTier}`}>
+          今ここで終了すると、宝箱の報酬は <strong>「{chestPreviewLabel}」</strong> の見込み
+        </p>}
+      </div>}
       <button
         onClick={toggleTracking}
         disabled={isSaving || (!isTracking && !!mapBattleId && !battleMap?.can_run)}

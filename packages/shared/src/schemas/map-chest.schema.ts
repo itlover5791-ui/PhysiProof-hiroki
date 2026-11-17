@@ -20,6 +20,12 @@ export const CHEST_REWARDS = [
 ] as const;
 
 export const chestTierSchema = z.enum(['small', 'medium', 'large']);
+export const chestPreviewSchema = z.object({
+  preview: z.object({
+    tier: chestTierSchema,
+    valid_for_ms: z.number().int().positive().max(15000),
+  }).nullable(),
+});
 const builtinRewardSchema = z.enum(['chest-sprout', 'chest-ripple', 'chest-compass', 'chest-switchback', 'chest-crown', 'chest-aurora']);
 export const chestRewardIdSchema = z.union([builtinRewardSchema, z.string().uuid()]);
 export const chestRewardKindSchema = z.enum(['emblem', 'pattern', 'title', 'buff']);

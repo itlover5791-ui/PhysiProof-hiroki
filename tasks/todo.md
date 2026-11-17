@@ -1,3 +1,11 @@
+# Live personal chest rarity (2026-11-17)
+
+- [x] Validate the current target with the existing chest award geometry and fresh online GPS.
+- [x] Show the same estimate on the selected pin and by the finish button, with replaceable tier artwork.
+- [x] Verify the estimate stays private and expires, does not award loot by itself, and agrees with completion.
+
+The SQLite integration tests use an open loop, a closed loop, departure, stale GPS, and weekly rollover. Both TypeScript checks, all 1,063 tests, and the production Web build passed. Real-world phone GPS has yet to be verified.
+
 # Treasure chest reward administration (2026-11-17)
 
 - [x] Add a managed reward pool and preserve the contents of awarded rewards.
