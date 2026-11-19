@@ -1,3 +1,111 @@
+# Live personal chest rarity (2026-11-17)
+
+- [x] Validate the current target with the existing chest award geometry and fresh online GPS.
+- [x] Show the same estimate on the selected pin and by the finish button, with replaceable tier artwork.
+- [x] Verify the estimate stays private and expires, does not award loot by itself, and agrees with completion.
+
+The SQLite integration tests use an open loop, a closed loop, departure, stale GPS, and weekly rollover. Both TypeScript checks, all 1,063 tests, and the production Web build passed. Real-world phone GPS has yet to be verified.
+
+# Treasure chest reward administration (2026-11-17)
+
+- [x] Add a managed reward pool and preserve the contents of awarded rewards.
+- [x] Add the admin tab, reward-only artwork selection, and player access to acquired artwork and titles.
+- [x] Verify authorization, lottery, asset ownership, deletion, type checks, and build.
+
+All 1,061 tests passed, including SQLite coverage for management, incremental migration, awards and equipment. Team buff definitions are editable; battle grants and live rarity previews are separate design decisions.
+
+# Restore treasure chest visibility during map-provider outages (2026-11-12)
+
+- [x] Reproduce timeouts and identify why a failed lease kept returning “preparing”.
+- [x] Extract and verify eligible public walking loops for all 47 prefectures.
+- [x] Draw and save weekly chests from the bundled catalogue, recovering failed and empty weeks.
+- [x] Verify stable placement, old-row recovery, type checks, tests, and the Web build.
+
+The bundled OpenStreetMap snapshot has 2,393 candidates (266 in Tokyo and 108 in Kanagawa). The SQLite test restores both a failed lease and an already marked empty week with all fetches disabled, and confirms concurrent users receive the same placement. All 1,057 tests pass.
+
+# Foope and personal map treasure chests (2026-11-12)
+
+- [x] Identify existing GPS, prefecture, uniform, and design-document integration points.
+- [x] Implement prefecture-scoped shared placement, a target frozen at run start, and per-account reward claims from online GPS.
+- [x] Connect reward inventory to the personal uniform editor and change user-facing app names to Foope.
+- [x] Verify GPS geometry, duplicate/retry behavior, ownership, type checks and build.
+- [x] Rewrite the 14-chapter specification and verify the resulting document.
+
+Acceptance: closing a valid loop around the selected chest awards one persistent cosmetic of the correct tier per player and box. Other players can still claim that chest. Team battle items remain a design item.
+
+Verified 1,056 tests, root and frontend type checks, production-configured Web build, and 14 Google Docs headings and body content. Live Tokyo Overpass probes timed out from the workstation; provider failover and candidate parsing were exercised using fixtures. Phone GPS performance remains to be tested in the field.
+
+# Local / production administrator screen parity (2026-10-16)
+
+### Acceptance criteria / plan
+- Compare the actual local and production admin routes and served code. Do not treat the isolated, in-memory Uniform Studio fixture as the full administrator application.
+- Restore the local API and apply pending migrations only to local D1. Keep local D1/KV, credentials and sessions isolated from production; do not copy real users, tokens or production images, grant roles, or redirect local writes to production.
+- Make the ordinary admin route easy to find from the diagnostic page and clearly identify synthetic data. Provide a reproducible one-command local startup that runs migrations and both required servers without logging secret bindings.
+- Verify navigation/layout, fail-closed admin access, local persistence and startup errors; run regression tests/typecheck/build. This task does not authorize a new production deployment or commit/push.
+
+### Checklist
+- [x] Diagnose: local tab points at /qa/uniform-studio.html, which mounts only the component fixture; 5173 is running, 8787 is stopped. Local migrations 0033-0035 are pending. Both environments use the same AdminDashboard source; there is no DEV/PROD admin layout fork.
+- [x] Clarify fixture entry, restore real local startup/migrations and normal admin route.
+- [x] Verify API/proxy/storage/auth, fixture link, regression tests/typecheck/build and document results.
+- [x] Human-assisted visual comparison completed after the user logged in locally. No production session copied or roles granted.
+
+### Results / evidence
+- Added npm run dev: applies pending migrations with --local, starts the real Worker and Vite, checks readiness and stops owned servers together. Uses process.execPath/argument arrays, loopback fixed ports, no production API override, no secret-binding startup output and no unrelated-process termination. Existing separate startup scripts remain available.
+- Applied local migrations 0033-0035 without replacing users/designs. Local frontend/API now run at 127.0.0.1:5173/8787; Vite proxy uses the same IPv4 address. Public local catalogue reports KV ready, 3 standard models, zero local image usage; unauthenticated admin remains 401. No production data is imported or modified.
+- The fixture now visibly says it is component-only/in-memory, warns that reload loses fixture data, and links to /admin?tab=uniform-templates and the actual workshop. It does not impersonate an administrator or acquire a real session.
+- 811 tests (12 new), typecheck, normal and production-equivalent frontend builds passed. Production-equivalent JS exactly matches deployed index-ByDF0Ac1.js, SHA-256 3765C4F5A263AE09AC0BB3C8DBA5A9ED813657230BE07CDAADE0BFD5DA7300C8. Existing large-chunk/mixed-import warnings remain. Actual duplicate startup exits 1 without stopping the existing API; ownership/valid-PID shutdown logic is separately tested without terminating real unrelated processes.
+- Native in-app browser confirmed the new fixture notice/link, real local app loading, and general-user redirect rather than an admin bypass. The user then logged in locally. Actual local/production UI comparison matches all 11 admin menus, selected tab, background and both uniform sections; local shows 3 models / 6 completed templates. Aggregate counts differ because DBs are intentionally separate.
+- Imported an owned synthetic SVG through the real local file picker, saved ローカル保存確認_20261016 as a private local draft, navigated to a fresh full page, and re-fetched its 244×480 image / 98×192 thumbnail from local D1/KV. Local writes increased from 0 to 2; no other existing records were modified. Screenshot: OS temporary directory physiproof-local-admin-fixed-20261016.png. This is the ordinary app, not the in-memory fixture.
+- Local changes only, not committed/pushed/deployed. Production test material from the preceding request stays a private draft; this fix performs no production writes.
+
+# Card-free uniform image storage via Workers KV (2026-10-16)
+
+### Acceptance criteria / plan
+- User approved replacing unactivated R2 with Workers KV on the Free plan; never enter card details, activate R2, or change to a paid plan.
+- Preserve D1 metadata, immutable versions, admin session checks, legacy uniforms, running and scoring. Storage adapter adds KV without reinterpreting pre-existing R2 keys.
+- Represent storage/provider/usage in shared contracts; reserve upload/storage budgets atomically in D1 before KV writes. Never publish a partially uploaded version.
+- Treat existing-version KV misses as temporary propagation (503, no-store, Retry-After), not permanent public 404 cache entries. Keep draft edits on failed uploads.
+- Verify real workerd/D1/KV persistence, concurrency/quota/failure/privacy cases and mobile UI; provision a dedicated namespace, deploy and confirm actual remote storage.
+
+### Checklist
+- [x] Inspect implementation, previous pending changes and official KV limits/consistency.
+- [x] Shared status contracts, append-only budget migration and KV adapter/API.
+- [x] UI for storage readiness/limits and transient retry; preserve existing behavior.
+- [x] Real KV persistence: 52 workerd checks, same 52 for legacy R2 fallback, quota/concurrency/privacy tests; dedicated free namespace created and binding configured.
+- [x] Commit/push, deploy and confirm actual production KV binding, migration and frontend delivery.
+- [x] Human-assisted final production upload/readback completed after the user's administrator login: created private draft 本番保存テスト_20261016, reloaded the page, re-fetched 976×1920 PNG / 98×192 thumbnail and drawing source, and matched the saved layer coordinates. Public search returns zero draft items; 45,692 stored bytes / 3 writes. No other existing production records changed.
+
+### Working evidence
+- Created only the dedicated KV namespace `my-app-backend-UNIFORM_ASSETS_KV` (ac3d9ea43b8f4d1fbb7d35a05f76b1ba) using existing approved OAuth. No R2 activation, billing change, card registration or paid plan.
+- Reservations count ambiguous/failed writes conservatively and are committed with metadata in the same D1 batch. Unique keys and stored provider prefixes preserve old versions and concurrent winner objects.
+- Workerd caught the installed Miniflare's older minimum cacheTtl (60 seconds); use 60 for provider caching while client retries every 30 seconds. Browser failures were not marked as completed verification.
+- Final verification: 799/799 tests, typecheck, production frontend build and whitespace checks passed. Native in-app browser synthetic QA at 390px verified loaded PNG, editable image, new revision, immediate thumbnail, persistent save notice and in-bounds storage help. Runtime persistence was checked separately against real on-disk D1/KV, not inferred from the memory UI fixture.
+- Current OAuth can create/list this KV namespace but direct value writes return 10000; temporary Worker deploy also lacked script-deployment access, so no temporary Worker or remote test values were created. These were bounded diagnostics only. Do not broaden permissions silently; use the established CI deployment token for the production binding and clearly separate local upload evidence from production upload evidence.
+- Delivery: ffa2947e867fa902cf2d0beb4922bfc5edba9d8e pushed normally to main with the previous author. GitHub Actions run 38837667820 succeeded through D1 migration 0035, Worker and Pages deployment.
+- Production public catalogue reports storage_ready:true, provider:kv, capacity_bytes:900000000 and daily_object_write_budget:900; API health is online, admin without authentication is 401, dashboard is 200 and serves index-ByDF0Ac1.js with the new storage/retry UI. Live browser confirmed the workshop and three standard models without saving/changing the current user's design.
+- Storage uploads/readback/restart were verified locally in the real Worker runtime (52 checks each for KV/R2) and browser persistence flows only in the explicitly synthetic fixture; a real production administrator upload is not claimed. No subscription, card registration or existing production user-data mutation occurred.
+
+# Uniform image registration activation (2026-10-16)
+
+### Acceptance criteria / scope
+- Enable actual image/thumbnail/editable-source persistence and subsequent reload, not only the memory-based QA fixture.
+- Reuse the existing Hono Worker/D1 and versioned R2 adapter. Do not introduce an unrelated hosting service or change running/scoring/legacy uniforms.
+- User approved adding workers:write for project image storage and related settings. Stop before a new paid subscription/payment registration.
+- Verify PNG upload, versioned image/source retrieval, private draft access, unchanged previous versions, regression tests and deployment configuration.
+
+### Checklist
+- [x] Inspect clean baseline, implementation, cloud connection and repository lessons/rules.
+- [x] Refresh approved Cloudflare authentication. First browser consent timed out; the authorization link reopened in Codex completed successfully with the approved workers:write and existing scopes.
+- [x] R2 activation was blocked by 10042; user rejected card registration. Superseded by the approved card-free KV plan above; R2 activation is no longer required.
+- [x] Replaced the proposed R2 production configuration with the KV plan above.
+- [x] Verify local actual registration/reload (51 workerd/D1/R2 checks), all 788 regression tests and typecheck; record the external blocker.
+
+### Working notes / evidence
+- Added scripts/verify-uniform-storage.mjs: full production Worker bundled into workerd, all real migrations applied to fresh on-disk D1, R2 images and source persisted in a unique OS temporary directory. No external network requests or real users.
+- Actual API verification passed 51 checks: password-issued proof, draft privacy, PNG upload/readback, source readback, full runtime restart, persistence of token/metadata/images, publication, conflict handling and old-version retention after hiding.
+- This verifies the runtime/storage code, not production Cloudflare provisioning. Do not mark remote R2 connected until account/bucket/binding and actual remote access succeed.
+- Cloudflare authentication successfully refreshed 2026-10-16. Read-only bucket listing then returned account activation error 10042, not the previous missing-scope 10000. Opened the account's R2 Overview for the human to complete the subscription/checkout flow. Existing production Worker, D1 data and Wrangler bindings are unchanged.
+
 # Uniform Studio integration (2026-10-13)
 
 ### Acceptance criteria and working notes
@@ -393,3 +501,243 @@
 - Final full verification passed: all 664 tests (including 61 actual-migration/SQLite/route cases), typecheck, workspace build and whitespace checks. Real-route tests cover admin coefficient permissions/validation/persistence, frozen invitations, loss/recapture, privacy, legacy compatibility and atomic concurrent claim rollback. Existing mixed-import and bundle-size warnings remain.
 - Isolated headless browser checks passed the three-part score display, legacy-rule label, help bounds/Escape, 30-second refresh, long team names/huge totals and admin save payload at 320/390/768/1365 widths, with no page errors. Inspected mobile and desktop screenshots. The computer-use browser helper failed to start; browser QA used synthetic fixtures and did not modify existing user data. Real outdoor GPS running and a physical phone are not tested.
 - Local frontend responds 200 and API health reports online. The dashboard preview was requested in Codex (queued); use its Team tab to see battle cards. main and origin/main matched before delivery. The exact resulting commit SHA, push and post-push verification are reported in chat after execution; production migration/deployment uses the existing main GitHub Actions workflow, without a separate manual deployment.
+## Smartphone administrator UI (2026-10-16)
+
+### Acceptance criteria
+- All 11 management sections remain reachable at 320/390/768/1280px without document-level horizontal overflow. Mobile navigation identifies the current section; desktop navigation remains visible.
+- Uniform component assets and completed templates are clearly separated without discarding unsaved edits. Image import, drawing and drawing-source import remain available with unchanged validation/versioning/storage.
+- Forms use readable 16px mobile inputs and touch-sized controls. Wide audit tables scroll inside labelled regions; filters and modal close/actions stay reachable.
+- No API, schema, database, scoring, authentication or production data changes. Preserve preceding uncommitted local-start/QA changes. No commit/push/deployment requested this turn.
+
+### Checklist
+- [x] Read repository rules, inspect current components and reproduce the cramped 390px administrator layout.
+- [x] Implement responsive shell/navigation, contained tables/forms/dialogs and clearer uniform editing workflow.
+- [x] Add regression coverage and run tests, typecheck and build.
+- [x] Verify actual local admin at mobile/tablet/desktop widths, capture screenshots and report remaining limitations.
+
+### Working notes
+- Presentation-only: shared Zod contracts and Hono RPC handlers remain unchanged.
+- Baseline: long horizontal menu, browser-default material buttons, fixed-width summary grids and oversized table/filter rows. Local admin authentication exists; no production mutation needed for QA.
+### Results
+- Added a compact mobile section selector and desktop sidebar, a two-column mobile summary, labelled/keyboard-scrollable table regions with filters outside the scroll area, 16px mobile fields, 44px action controls and viewport-bounded scrolling dialogs with visible close controls.
+- Separated component materials from completed templates while keeping both editors mounted; verified a synthetic unsaved material name survives switching views. Grouped all three existing image/drawing/source import methods, styled the material editor and added direct scroll/focus to opened editors. Storage, validation, publication, legacy rendering and API contracts are unchanged.
+- All 824 tests in 25 files passed (13 new navigation/table/workspace checks); root typecheck and frontend production build passed. Existing mixed-import/large-bundle warnings remain.
+- Actual authenticated local-admin browser QA passed 44 section/width combinations (320/390/768/1280px), with no document horizontal overflow or mobile fields below 16px. Verified the user table can scroll to fully visible rightmost actions, help bounds at 320px, material draft preservation, completed-template editing, drawing-editor opening and notification/user-edit dialog closure at 320x420. No real notification, deletion, publication or account edits were submitted.
+- Physical iOS/Android keyboard behavior is not device-tested. Existing admin map background tiles display an API-key-required watermark; this separate, pre-existing provider issue was not altered or mistaken for a responsive-layout failure. Some local audit/API lists are empty; populated production data was not changed for QA.
+- No commit, push or deployment performed. Earlier uncommitted local-start/QA changes remain intact; local dev servers stay available for review.
+## Deliver administrator UI and repair basemap (2026-10-20)
+
+### Acceptance criteria
+- Replace the administrator-only unauthenticated CARTO tiles causing the API-key watermark, using the already-installed Leaflet/MapLibre/OpenFreeMap stack. Preserve territory overlays, filtering, popups and pan/zoom; do not modify running or battle calculations.
+- Handle load failure/retry and component disposal safely, including switching tabs and responsive resizing. Preserve attribution and avoid new credentials or paid services.
+- Reverify the pending responsive-admin and local-start/QA changes, then commit using the preceding author, push main without history rewriting and verify the existing Cloudflare deployment and production bundles.
+
+### Checklist
+- [x] Inspect repository rules, pending files, existing user-map integration and deployment workflow; verify provider documentation.
+- [x] Repair and test the administrator basemap.
+- [x] Run regression tests, typecheck/build and local visual checks.
+- [x] Review/stage the approved changes and prepare normal commits/push; verify deployment and production after execution and report those results in chat.
+
+### Working notes
+- CARTO's current official documentation confirms the API-key watermark requirement. OpenFreeMap's official guide supports the Leaflet adapter already in this repository and requires no API key.
+- Presentation/provider repair only: no shared schema, DB migration, identity or scoring changes required. No Cloudflare R2 activation, billing or credential expansion is needed.
+
+### Verification before delivery
+- Reproduced the API-key watermark on the existing authenticated production administrator map. Replaced administrator-only CARTO raster tiles with the existing Leaflet/MapLibre/OpenFreeMap Positron stack, simplifying building/POI clutter without changing the running map or territory overlay/filter/popup logic.
+- Bundled Leaflet replaces the unowned CDN script/global. Background loading is abortable, has a 15-second failure notice and manual retry, and disposes its own listeners/layer on tab removal. A ResizeObserver keeps the canvas sized to the responsive container; attribution remains visible.
+- All 837 tests in 26 files, including 13 new basemap success/failure/timeout/disposal/retry cases, passed. Root typecheck and production-equivalent Vite build passed; existing mixed-import/large-bundle warnings remain. Added tracked-line credential-pattern scan and whitespace checks passed.
+- Actual local admin shows the Tokyo basemap at desktop and 390px width, with no watermark or document overflow, and survives zoom and switching tabs. Local D1/KV remain separate from production and no pending local migrations were needed. Deployment/production post-push results will be reported after execution.
+## Original Studio uniform collection (2026-10-20)
+
+### Acceptance criteria
+- Add six visually distinct version-2 uniform templates: velocity, wave, sunset, contour, pinstripe and pixel motifs, with original emblems and editable colors/front-back/lettering.
+- Preserve existing version-1 artwork, the original six templates, saved uniforms, uploaded assets and all run/battle data. No branded logos, image-generation dependency, external images or new storage costs.
+- Additive shared-schema choices first, then additive catalog migration; use the actual template picker/admin preview rather than a separate replacement editor.
+- Verify schemas, immutable old SVG output, new front/back rendering, actual SQLite seed preservation/idempotency, API listing/saving and local mobile/desktop visuals. No new commit/push/deployment requested this turn.
+
+### Checklist
+- [x] Inspect current studio schema, SVG renderer, catalog and repository rules; choose six original styles.
+- [x] Implement additive shared definitions, original SVG artwork and catalog entries.
+- [x] Add regression tests, run typecheck/build/tests and apply the local-only migration.
+- [x] Visually verify the real local catalog/editor and present the designs for review.
+
+### Results
+- Added VECTOR EDGE, TIDAL FLOW, DUSK RUN, TERRAIN CLUB, MONO PACE and PIXEL RUSH as published v2 completed-template records in additive migration 0036. New six basic patterns/four emblems are editable bounded SVG, requiring no uploads, external assets or storage service changes.
+- Migration 0036 applied to local D1 only; the real authenticated local administrator catalog lists 12 records (original six plus new six). No real saved user/team designs were edited. Browser test edits were restored, with the save button disabled again.
+- All 871 tests in 28 files passed. New checks cover shared schema/metadata, front/back SVG IDs and safe output, SHA-256 equality with pre-change artwork for all three old model front/back fixtures, actual SQLite preservation/replay, catalog search and personal/team save/authorization APIs. Root and frontend typechecks passed; final Vite build passed with pre-existing bundle-size/mixed-import warnings.
+- Actual 1280px catalog/editor and 390px administrator editor checked through computer-use. Back-only pattern changes, lettering, accent color and new emblems update the preview correctly. Found and fixed narrow vertical labels caused by inherited administrator flex rules; large choice sets now use a scoped grid (146×44px buttons at 390px) with no horizontal overflow.
+- Added read-only local `/qa/uniform-collection.html` comparison using the actual collection/preview components, with sample back lettering clearly identified. It is not a production entry point. No production migration, commit, push or deployment performed this turn.
+
+## Release Studio collection under standing Git authorization (2026-10-20)
+
+- User authorizes future commits/pushes of requested project changes without asking again. This does not authorize unrelated changes, history rewriting, billing, destructive operations or broader access permissions.
+- Scope: the preceding six-uniform collection only, including its tests, additive seed, documentation and read-only QA preview. Keep the preceding commit's author information.
+- Verification: all 871 tests and root typecheck passed again; production-equivalent Vite build passed. The expected staged files are the collection implementation/tests/docs only, with no new credentials.
+- Delivery steps: create a normal commit and push main without force; verify local/remote SHA. Check the existing automatic Cloudflare deployment and deployed bundle/catalog; report their actual post-commit status in chat without creating a bookkeeping-only redeployment.
+## Per-part colors for uploaded uniform artwork (2026-10-20)
+
+### Acceptance / invariants
+- Administrators can prepare named color regions for uploaded PNG/JPEG/SVG patterns/emblems, using local color clustering plus connected fill, brush/erase and undo. Same-colored disconnected areas can be assigned different parts. Automatic regions are suggestions, not semantic AI recognition; no external image transfer/new paid service.
+- Users independently recolor named parts of front/back patterns and emblems, reset to the original image, and save personal/team designs under existing permissions. Original alpha and unassigned pixels remain unchanged. Existing assets/designs without regions render unchanged.
+- Store bounded 512px indexed region maps with the existing immutable source sidecar, privately retain drawing originals, expose only region maps for published versions, and reuse current KV reservations/limits. No DB schema or blanket rewrite needed.
+- Model JSON describes garment geometry, not printed artwork; retain required model functionality and explain its purpose, without silently removing import/export.
+
+### Checklist
+- [x] Inspect schemas/storage/editor/renderer and choose a backward-compatible design.
+- [x] Implement shared schemas/region algorithms and protected source/API persistence.
+- [x] Implement administrator region editing and user palettes, preview/export and reset handling.
+- [x] Test validation, same-color separation, alpha/immutable-version preservation, API permission/propagation and storage quotas; typecheck/build; actual mobile/desktop visual checks.
+- [x] Review release scope and prepare a normal commit/push under standing authorization. Report the actual automatic deployment result after push, without a bookkeeping-only redeployment. No real user's saved kit or production artwork is overwritten for QA.
+
+### Results / release checkpoint (2026-10-21)
+- All 896 tests in 29 files passed; root and frontend TypeScript checks and the production-API Vite build passed. The build retains existing chunk-size/mixed-import warnings. Isolated real workerd with on-disk D1/KV passed 58 persistence/privacy/quota checks, including restart; the R2-compatible adapter also passed 58 checks earlier. External requests were disabled in both storage fixtures.
+- Actual authenticated local administrator import showed named auto-regions for PNG and SVG. Saved one clearly named local-only draft `QA_部位カラー_20261021` (SVG compass, 6 regions) and verified names/map after a page reload, not just from client cache. Other user/team designs and production artwork were not changed. An expired admin session was handled with ordinary human re-login, never a forged proof.
+- Actual administrator checked at 390px and 1280px: no horizontal overflow, 16px text inputs, 44px region tool buttons and an entirely in-bounds help popover. The separate in-memory QA page verified splitting initially identical blue stripes, independent front/back and emblem colors, reset and successful synthetic user saves; those fixture writes are not real user data.
+- Images/maps are additive immutable revisions; old v1/v2 artwork tests remain passing. Private drawing originals are unwrapped only for administrators, never included in published map responses. Region summaries remain separate from pixel data; quota accounting remains 3 objects even with both drawing and map. No migration, new package, cloud provisioning, billing or image-AI service was introduced.
+- Added the workflow/precision limits to `docs/uniform-studio.md` and a model-definition help button: model JSON is garment geometry and remains available as an optional advanced import/export, unrelated to artwork part colors.
+
+## Production artwork save failure (2026-10-21)
+
+### Acceptance / plan
+- Identify the actual production failure before changing storage logic; preserve artwork, saved kits, quota accounting and password-issued administrator authorization.
+- [x] Reproduce the production error and inspect the corresponding authentication/storage path.
+- [x] Make the smallest safe repair, with actionable session recovery and retained unsaved artwork if the failure is authentication-related.
+- [x] Add regression coverage; run tests, root/frontend types and build; verify the real authenticated save flow using a clearly named test-only draft, never overwrite existing artwork.
+- [x] Review release scope and prepare a normal commit/push under standing authorization; report the actual production deployment result after push without a bookkeeping-only redeployment.
+
+### Working notes
+- Initial production material-library request displays the missing/invalid-administrator-proof error. General admin dashboard authentication is separate from the 12-hour password-issued material proof; another login rotates earlier proofs too. A 403 alone does not distinguish expiry from rotation.
+- User performed ordinary production re-login after automatic credential entry was blocked by safety review; no workaround, token extraction or impersonation was used. After re-login, production listed the KV provider with ample capacity and accepted a full-size PNG with six color regions as private draft `QA_本番保存確認_20261021` v1. Existing artwork and saved user/team kits were not changed.
+- Frontend-only repair adds an explicit recovery card at the failure location, a separate-tab login link, read-only recheck on button/storage/focus and a disabled save while proof is known invalid. The mounted form, image and region data are not reset. No new API, database migration, permissions or billing change.
+- In-memory UI QA reproduced save-time 403, confirmed the same PNG/part names and metadata remained, then rechecked and saved v2 after simulated recovery. At 390px, the recovery card fit the viewport and both actions had 44px minimum height. These synthetic responses are not production authentication.
+
+### Results / release checkpoint
+- All 900 tests in 30 files passed; root/frontend typechecks and the production-API build passed. Existing bundle-size and mixed-import warnings remain unchanged.
+- Regression covers an expired image save causing no KV/R2 writes or storage reservation, followed by successful persistence of the identical region-bearing payload after an isolated fresh proof. Component tests cover the separate-tab link, preserved-draft guidance, pending state and cleanup of cross-tab/focus rechecks.
+- Production accepted and, after an actual page reload, returned private draft `QA_本番保存確認_20261021` v1 including its PNG and six-region map. The test draft is deliberately not published or deleted. No existing artwork, user/team kits, runtime auth policy, quotas, database schema or cloud settings changed.
+
+## Region label layout repair and emblem usability review (2026-10-21)
+
+### Acceptance / plan
+- Repair the region-overlay checkbox text collapsing into a narrow vertical column in the actual administrator layout, at desktop and phone widths. Keep the label accessible and toggle functional, without altering artwork or saved designs.
+- Actually change emblem colors in the user editor without saving real user/team uniforms, inspect the preview at phone/desktop sizes, and report usability findings and suggested improvements. This review does not authorize implementing a new zoom/editor workflow yet.
+- [x] Reproduce the checkbox geometry in the real parent styles and inspect actual user color-preview behavior.
+- [x] Apply the smallest scoped label/input repair and regression coverage.
+- [x] Verify toggle operation, label wrapping, mobile/desktop geometry, tests/types/build; review and prepare a normal commit/push under standing authorization. Report the actual deployment result after push without a bookkeeping-only redeployment.
+- No schema/API/data migration is expected for this layout-only repair; do not publish production draft emblems just to make them selectable for QA.
+
+### Findings / checkpoints
+- Actual local administrator: checkbox width 411.2px, label height 480px before repair. A scoped grid plus explicit wrapping span and fixed 18px checkbox reduced the row to 44px. At 390px and 1280px, the checkbox remained 18px with respectively 279.6px and 538.4px available for text, no document overflow; direct checkbox and label-text clicks both work. Overlay restored to checked; no material save performed.
+- Actual production user editor, not a fixture: changed three color regions at 1280px and two at 390px, waited for the rendered PNG/SVG preview, and exercised original-color reset. The selected public emblem/kit were already present when this review started; no material was published for testing. Confirmed saved palette restoration and disabled dirty/reset buttons at the end, without saving either personal or team kits.
+- Usability evidence: full-kit emblem rendered about 22.2x21.7px on desktop and 23.5x23.0px at 390px. At the mobile palette, the preview panel was entirely above the viewport (bottom about -481px), requiring scroll-back to inspect changes. Generic numbered part names and only a whole-material original-color reset also make fine tuning less clear.
+- Recommendation only (not implemented): a live 240–300px emblem-only preview near the palette, retaining a small full-kit placement preview; highlight the selected region and use meaningful administrator-defined part names; consider per-region reset/undo. Avoid changing actual shirt emblem scale just to improve editing visibility.
+- All 902 tests in 31 files passed, including the two new checkbox structure/CSS guards; root/frontend typechecks and the production-API build passed. Existing bundle-size/mixed-import warnings remain. Scope is only the label markup/scoped CSS, regression tests and task/lesson notes; the user emblem editor, actual logo scale, APIs, persisted colors and cloud settings are unchanged.
+
+## Age bands, friends and private profile territory maps (2026-10-22)
+
+### Acceptance / decisions
+- Collect age (not date of birth) on new signup and in profile settings, exposing only age bands on the normal individual map. Keep all/mine views and add friends-only; never change team/battle ownership or scores with these display filters.
+- Add owner current/history profile maps, accessible to accepted mutual friends only when the owner chooses friends; private is the safe default. This preference does not hide territories from the normal everyone map, and the UI must explain this limitation.
+- Backfill only currently available personal territory; retain future successful personal capture snapshots atomically. Do not invent previously lost historical geometry or include raw running tracks.
+- Server remains authoritative for territory/capture/scoring. A bounded short-lived public-map device cache is only a display optimization; private profile maps must not persist to device cache.
+- Replace unsigned UID/JWT authentication with password-issued opaque sessions for protected APIs before offering private history. Preserve existing accounts with incremental password-hash migration and require a normal re-login. No production bypass or automatic credential entry.
+- Use additive D1 migration, existing map provider/dependencies and no paid infrastructure. Standing commit/push authority applies only to this task.
+
+### Checklist
+- [x] Shared schemas, additive migration and authenticated privacy/capture APIs.
+- [x] Age/privacy forms, map filters/cache and accessible profile maps from home/friends.
+- [x] Migration, auth/privacy boundaries, capture preservation, UI/cache regressions, all tests/types/build and mobile/desktop synthetic UI.
+- [ ] In progress: review diff, document limits, commit/push and verify existing production deployment.
+
+### Results / release checkpoint
+- All 927 tests in 33 files passed, including real SQLite/migrations and real password-issued sessions for the new privacy tests. Checked anonymous/forged/expired/revoked credentials, private/mutual/pending/teammate access, unfriend and pagination, public age-band filtering/ETag invalidation, atomic capture/history rollback/replay, legacy preservation and password-change races. Existing battle regressions still pass.
+- Root/frontend typechecks and production-API Vite build passed; existing large-bundle/mixed-import warnings remain. External-network-disabled real workerd with persistent D1/KV passed 59 image-storage checks, including login/password upgrade, writes and restart. No new runtime service/package/credentials.
+- Actual components in the clearly labelled memory-only QA page verified 390px and desktop: profile current/history, private denial with zero drawn polygons, age/publication input and synthetic save, public/friends/10s filtering changed 3→2→1 polygon paths. The 390px map dialog remained in bounds with 44px buttons and no document overflow. Found and fixed old map HUD crossing the profile modal using a high-z-index portal and focus containment.
+- Local migration 0037 applied by the existing development launcher. Normal real-account login remains a human step; requested asynchronously, never bypassed or automated with credentials from earlier chat. No real user age, privacy preference, friendships or run/territory data changed for UI QA.
+- Owner history is private by default and includes current personal backfill plus future personal captures only. Main world map still shows everyone. Public-only device cache is bounded to ~2MB/5 minutes and requires live server validation; it is not client-authoritative/offline storage. Production release result is to be reported after push, without a bookkeeping-only commit/deployment.
+
+### Production cache follow-up
+- Commit 4dce0fc deployed successfully (workflow 39716284514), including migration 0037 and both services. Production frontend bundle matched the locally built `index-VDcgwqYU.js`; health/world-map returned 200, unauthenticated profile access returned 401, and no exact ages were in the public territory response.
+- Actual production response ETag was `W/"territories-1-all"`; echoing it returned 200 because the Worker compared only the strong form. The follow-up normalizes weak tags for GET and covers weak/list forms in the real SQL integration test. Verify a real production 304 after the follow-up deploy. No additional data/storage/auth policy changes.
+
+## Standalone running trends and simpler menus (2026-10-22)
+
+### Acceptance / decisions
+- Add a standalone running-trends menu, never an ownership-map mode. Show weekday × 2-hour run-start tendencies for the previous 4/8 complete weeks of days in Japan time; explain this is app usage, not geographic/general/real-time crowd density.
+- Personal completed-run statistics can use existing records. Community trends use only explicit opt-in users' completed runs started after consent, are delayed until the following day, expose only broad levels, and suppress cells with fewer than 5 distinct participants. No individual identities, tracks, locations, age/health filters or precise community counts. Opt-out excludes contributions immediately.
+- Remove coach/future-prediction navigation, content entry points and administrator menu toggles; retain their existing data/backend compatibility. Preserve health/vital profile entry without those menus. No scoring, ownership or tracking changes.
+- Default statistics consent is off. No real user health/preferences/consent or production runs will be altered for QA. Reuse existing services, dependency/runtime and standing scoped Git push/deploy authority.
+
+### Checklist
+- [x] Shared contracts and additive storage/API with privacy/aggregation tests.
+- [x] Standalone responsive trends UI, consistent navigation/admin visibility and vital profile form.
+- [x] Verify boundaries, consent suppression, navigation, profile round-trip, full tests/types/build and mobile/desktop UI.
+- [ ] In progress: review, document, commit/push and check automatic production release.
+
+### Verification / release checkpoint
+- All 957 tests passed, including 30 new shared/UI/real-SQL tests. Covered JST cutoffs, 4/8-week windows, completed/positive runs, own-vs-other records, distinct participants and 5/10/20 suppression bands, consent lifecycle/no retroactivity, password-issued sessions, private vitals round-trip and unrelated-field preservation, and administrator visibility permissions.
+- Root/frontend typechecks and production-API Vite build passed. Existing mixed-import/large-chunk warnings remain; no dependency, GPS collection, scoring or paid infrastructure changes.
+- Actual authenticated local D1 returned the new trends screen and personal/community switches; default sharing remained off. Actual profile body-entry navigation and existing values were available without editing them. Local migration 0038 applied successfully.
+- Memory-only QA with the real components passed 390px/1280px: 84 cells fit without document overflow, private body decimals saved with 16px inputs, consent save and period/error recovery worked, and the help panel stayed within the 390px viewport. Enlarged only the new help button tap area. No real user's consent, health, privacy, run, territory or battle records were changed for QA.
+- Temporary browser viewport override was reset and extra QA tabs closed. See docs/running-trends.md for exact semantics/limits. Production rollout follows the existing main-branch workflow; report its actual outcome in the handoff rather than creating a bookkeeping-only deployment.
+
+## Measured steps and consented place passage trends (2026-10-23)
+
+### Acceptance / decisions
+- Implement actual Android OS step-counter readings, not distance/height estimates. Keep measured and GPS-consistent game-eligible steps separate. Unsupported browsers continue existing distance/territory running and explicitly show unmeasured steps. No new step rewards or changes to existing battle coefficients without a rule decision.
+- Existing Android files are non-buildable prototypes (no Gradle/project entry point). Add an isolated buildable runner module hosting the trusted production web origin, an origin/main-frame restricted message bridge and an online foreground tracking service. No store publication, new accounts/billing, automatic permissions or authentication. No local Android SDK/device is present: verify native build via CI, and explicitly distinguish compilation from physical-device verification. iOS native implementation remains separate.
+- Server checks authenticated session ownership, fresh server-received telemetry, monotonic sequence/time/counter, bounded cadence/speed/stride, GPS accuracy, mocked fixes, stale gaps, replay/races and resets. Bad/uncertain segments never add eligible steps; GPS loss is not proof of cheating. Never claim tamper-proof client hardware attestation.
+- Store no lasting raw GPS track for the new feature: only last live fix for validation, clear on completion/abandon/expiry, and consented coarse registered-place/time buckets. Do not infer places from territory polygons or backfill old runs. Default location-statistics consent OFF and separate from global anonymous statistics. Opt-out excludes/removes one's passage buckets; re-enabling begins anew.
+- Place trends are authenticated historical app-participant passage tendencies, not actual public crowd occupancy or live location. Register coarse public areas via administrator UI; seed a clearly labelled Imperial Palace surroundings area after verifying public coordinates. Deduplicate users per place/time bucket, require at least 5 distinct people and 3 dates per displayed weekday/time cell, use complete prior days over 4/8 weeks, never exact counts/names/routes. No arbitrary user-selected spatial query.
+- Shared Zod contracts first, additive migrations, typed Hono client, RHF+Zod forms, no unrelated API/auth/scoring rewrites. Preserve existing changes; standing scoped commit/push authority applies.
+
+### Checklist
+- [x] Shared contracts, telemetry validation and additive DB/API with real SQL privacy/replay tests.
+- [x] Android runner/permissions/foreground service/secure bridge and Web integration, explicit unsupported UI, own measured/eligible totals.
+- [x] Place catalogue/admin entry, separate consent and responsive historical-place UI.
+- [x] Root/frontend types, production-API build, 1007 tests in 40 files and labelled memory-only 390px/1280px UI. Local migration 0039 applied. No real user runs/health/consent mutations.
+- [x] Document limitations and physical-device test procedure in docs/measured-steps-and-place-trends.md and Android README.
+- [x] Reviewed/committed/pushed initial implementation (3374741). Cloudflare workflow 39883218215 completed successfully, including migration 0039 and both services. Android workflow 39883218338 compiled/tested successfully and uploaded the debug APK. Compilation is not physical-device verification; no Android SDK/device is available locally.
+
+### Verification / release checkpoint
+- 50 new shared/frontend/real-SQL tests cover actual-vs-eligible separation, defaults, start-time consent epochs, withdrawal (including browser raw-fix removal), GPS/mock/counter/clock/gap and stale-fix recovery checks, replay/concurrent writes, completion races, atomic rollback, stale-run retention, expired passage deletion, ownership/admin permissions, 5-person/3-day suppression and no exact community identity/count leakage. Existing battle, map, uniform and auth tests remain passing.
+- Root/frontend typechecks and production-API Vite build passed. Existing mixed-import/large-chunk warnings remain. Android CI performs actual Java/SDK compilation plus StepAccumulator tests; no store publication, paid service, new real account or automatic device permission.
+- Memory-only real-component QA verified location consent save, period/search/no-results, error recovery, admin synthetic save, 84 chart cells, 16px text inputs, help within the 390px viewport and no horizontal document overflow at 390px/1280px. Screenshot values are explicitly fictitious, not sensor measurements. Finishing/polling and restored-stopped-service guards added for native lifecycle safety.
+- Server retains only a latest live validation fix (cleared on completion/abandon; scheduled cleanup has up to roughly 7 minutes delay after crash) plus consented coarse passage buckets for up to 56 days plus cleanup interval. No retrospective location inference from old runs/territories. Android route/token stay in service memory; existing browser route cache is unchanged.
+- Native readings are plausibility-checked, not cryptographically attested. Browsers/PWA do not gain an invented step count. iOS remains unimplemented. Real walking/shaking/background/offline/permission/battery checks remain explicitly required before treating the Android host as device-validated.
+- Final review added a tested stale/future previous-fix recovery guard; its scoped follow-up push/release is checked in the handoff, without an extra bookkeeping-only deployment. Temporary viewport override reset. Android artifact: https://github.com/taiki0814/PhysiProof/actions/runs/39883218338/artifacts/12471467145 (expires 2026-10-30).
+
+## Expiring battle territory, GPS-tolerant courses and cosmetic rewards (2026-10-23)
+
+### Acceptance / decisions
+- New isolated battle invitations accept a numeric text input in hours (decimals allowed, blank = unlimited; safety bounds 1 minute–365 days). Snapshot rules when invited; old/ongoing battles and the normal/personal world maps remain unchanged. Shared-world battles remain unlimited for this first release, clearly explained in UI/API validation.
+- Replay isolated capture footprints with per-part expiry: a fresh capture subtracts overlapping fragments from every team, refreshes only its covered portion, and never resurrects an older owner's expired/stolen area. Integrate holding/buffs exactly until expiry; keep already-earned holding, distance and first-spot bonuses. Clamp/freeze at battle end; no read-time mutation/cron dependency.
+- Courses are explicitly saved by the owner from a completed online loop and selected before running. Stable immutable course geometry, tolerant nearest-segment/progress matching, direction/closure/distance checks and server-accepted telemetry prevent ordinary GPS variation splitting courses or crossing/partial/replay counting as laps. No retrospective lap backfill or client-supplied lap totals.
+- Course geometry/loop counts inherit private/mutual-friend profile-map permission; no general public map markers or location-statistics opt-in coupling. Browser course tracking is explicit, online-only and must not invent steps; native service uses existing telemetry. No persistent full live track collection; retain only course progress and explicit saved-course geometry.
+- Cosmetic-only milestone rewards (titles, avatar frame, uniform) are server-unlocked once; no performance/points boost. Equip/revert with normal ownership/revision guards, preserve existing uniform editing. Require minimum course length plus multiple distinct running dates for rare rewards; no streak loss or pressure to run every day.
+- Standing scoped commit/push/deploy authority applies. No fake real-user consent, runs, teams, invitations, territory or equipment writes for QA. Physical GPS/device validation remains distinct from synthetic tests.
+
+### Checklist
+- [x] Shared schema/rules and additive migration; deterministic expiry/course matching tests.
+- [x] Transactional backend expiry capture, online course progress/completion/rewards and privacy/auth APIs.
+- [x] Numeric invitation UI, course save/select/profile map and cosmetic inventory/equipment UI.
+- [x] Real SQLite race/privacy/replay/rollback and existing-scoring regressions; baseline 1035 tests passed before external imports. 390px/desktop synthetic UI: decimal 2.75h invitation, invalid 0, shared unlimited, different-course save, title/frame equip, locked uniform, two map loop markers and private denial. Local migration0040 applied. No real account or run/equipment changes.
+- [x] Limits/device checks documented in docs/expiring-battles-and-courses.md. Review/release proceeds together with the separate external-reference feature; actual commit/push/deploy outcomes belong in the final handoff.
+
+## Display-only external running distance (2026-10-27)
+
+### Acceptance / working notes
+- Keep external health imports in separate owner-only tables/APIs. Never insert running sessions, movement, territories, laps, missions, team contributions, rankings or title mileage from imported records.
+- First native provider: Android 14+ framework Health Connect, read exercise and distance only, explicit foreground permission/sync, no GPS route/heart/step reads, no health writes/background permission. iOS/older Android/browser cannot initiate native reads; the web can view previously synced records.
+- Display app lifetime distance in blue and external last-30-day running distance in purple with text badges. Do not combine the totals. Read only completed running sessions and same-source distance; exclude manual/unknown-source distance and avoid double counting overlapping imported workouts. Do not infer running from daily walking totals.
+- Explicit default-off server-storage consent is separate from location/community statistics. Revision/nonce guards prevent stale sync after withdrawal. Disconnect removes imported records; no real health data/permissions/account changes for QA. The most recently explicitly synced device supplies the bounded 30-day snapshot, including corrections/deletions on next sync.
+- Preserve the preceding uncommitted course/expiry work, test and release in separately reviewable commits under standing authorization. No paid service, billing, store publication or new dependency is required.
+
+### Checklist
+- [x] Shared health import contracts, additive migration and owner-only transactional APIs.
+- [x] Android read/permission bridge, bounded session-distance import and native unit tests added. Compile must be verified in Android CI, not inferred from TypeScript tests; no local Android SDK available.
+- [x] Responsive personal display, consent/sync/revoke controls, source labels and unsupported states. 390px/1280px memory-only UI checked: 42.50km app vs15.20km external, 1 duplicate excluded, no horizontal overflow, 18px checkbox, >=44px buttons, help within viewport; sync, consent required, denied permission, Web read-only, two-step cancel/delete and retry recovery succeeded. Screenshot external-running-mobile-qa.png is fictitious, not wearable data.
+- [x] Final real-SQL privacy/replay/withdrawal/no-game-impact and race cases: all1052 tests/48 files passed, root/frontend typechecks and final production-API build passed (index-CZnXSrja.js). Local0041 applied; no real health/consent/permission changes. Known mixed-import/large-bundle warnings unchanged.
+- Course/expiry work committed separately as758853b; external-reference code is the second commit. Native compilation and automatic production rollout are verified after push and reported in the handoff rather than causing a bookkeeping-only deployment.
+- [x] Documented limits/device checks and separately committed/pushed course758853b and health5aaaa0f. Cloudflare workflow40438149013 and native build/unit-test/APK workflow40438149035 both succeeded, including production migrations0040/0041 and both services. No real health mutations. Compilation does not prove physical-device sync.
+- Final functional follow-up adds an indexed retention sweep (0042), checked with actual SQLite EXPLAIN QUERY PLAN to avoid scanning all health rows every five minutes. Final production read-only verification and release result are recorded in the handoff, without a bookkeeping-only redeployment.

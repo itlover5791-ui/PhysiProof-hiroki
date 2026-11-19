@@ -1,27 +1,39 @@
 import {useEffect,useState} from 'react';
 import {useForm} from 'react-hook-form';
 import {zodResolver} from '@hookform/resolvers/zod';
-import {studioUniformDesignSchema,createStudioUniform,personalizeUniform} from '@my-app/shared';
+import {studioUniformDesignSchema,createStudioUniform,personalizeUniform,STUDIO_PATTERN_CHOICES,STUDIO_EMBLEM_CHOICES,chestInventorySchema} from '@my-app/shared';
 import type {UniformDesign,StudioUniformDesign,UniformPersonalization} from '@my-app/shared';
 import StudioUniformPreview from './StudioUniformPreview';
 import UniformAssetPicker from './UniformAssetPicker';
+import UniformPartColors from './UniformPartColors';
 import InfoHint from './InfoHint';
 import renderer from '../lib/uniformStudio/renderer';
 import {studioRendererInput} from '../lib/uniformStudio/client';
+import client from '../lib/hc';
 import './UniformStudio.css';
 
 export type StudioEditorProps = {design:UniformDesign;revision:number;isTeam:boolean;editable:boolean;lettering?:UniformPersonalization;online:boolean;
-  onSave:(value:UniformDesign,revision:number)=>Promise<void>;saveLabel?:string;externalDirty?:boolean;onDirtyChange?:(dirty:boolean)=>void;selectedPreset?:UniformDesign;showPresets?:boolean};
-const patterns=[['none','なし'],['stripe','ストライプ'],['block','ブロック'],['shoulder','肩切替']] as const;
-const emblems=[['none','なし'],['shield','シールド'],['star','スター'],['monogram','モノグラム'],['circle','サークル']] as const;
+  onSave:(value:UniformDesign,revision:number)=>Promise<void>;saveLabel?:string;externalDirty?:boolean;onDirtyChange?:(dirty:boolean)=>void;selectedPreset?:UniformDesign;showPresets?:boolean;personalRewards?:boolean};
 const fonts=[['athletic','スポーツ'],['serif','セリフ'],['sans','サンセリフ'],['mono','等幅']] as const;
 const positions=[['high','上'],['middle','中央'],['low','下']] as const;
 function Choices<T extends string>({label,options,value,onChange}:{label:string;options:readonly(readonly[T,string])[];value:unknown;onChange:(v:T)=>void}){
-  return <div className="pp-uniform-field"><span>{label}</span><div className="pp-uniform-choices" role="group" aria-label={label}>{options.map(([v,name])=><button type="button" key={v} aria-pressed={v===value} onClick={()=>onChange(v)}>{name}</button>)}</div></div>;
+  return <div className="pp-uniform-field"><span>{label}</span><div className={`pp-uniform-choices${options.length>4?' pp-studio-many-choices':''}`} role="group" aria-label={label}>{options.map(([v,name])=><button type="button" key={v} aria-pressed={v===value} onClick={()=>onChange(v)}>{name}</button>)}</div></div>;
 }
-export default function StudioUniformEditor({design:saved,revision,isTeam,editable,lettering,online,onSave,saveLabel,externalDirty=false,onDirtyChange,selectedPreset}:StudioEditorProps) {
+export default function StudioUniformEditor({design:saved,revision,isTeam,editable,lettering,online,onSave,saveLabel,externalDirty=false,onDirtyChange,selectedPreset,personalRewards=false}:StudioEditorProps) {
   const {register,watch,setValue,reset,handleSubmit,formState:{isDirty,isSubmitting,errors}}=useForm<StudioUniformDesign>({resolver:zodResolver(studioUniformDesignSchema),defaultValues:createStudioUniform(saved)});
   const design=watch(),[view,setView]=useState<'front'|'back'>('front'),[message,setMessage]=useState(''),[ready,setReady]=useState(false),[parts,setParts]=useState<'model'|'pattern'|'emblem'>('model');
+  const [rewardInventory, setRewardInventory] = useState<ReturnType<typeof chestInventorySchema.parse>>();
+  const [rewardError, setRewardError] = useState(false);
+  useEffect(() => {
+    if (!personalRewards || isTeam || !online) return;
+    let active = true;
+    void client.api['map-chests'].rewards.$get().then(async response => {
+      if (!response.ok) throw new Error('Reward inventory unavailable');
+      const inventory = chestInventorySchema.parse(await response.json());
+      if (active) { setRewardInventory(inventory); setRewardError(false); }
+    }).catch(() => { if (active) setRewardError(true); });
+    return () => { active = false; };
+  }, [personalRewards, isTeam, online]);
   useEffect(()=>{reset(createStudioUniform(saved));},[revision,reset]);
   useEffect(()=>{if(selectedPreset?.version===2)reset({...selectedPreset,jersey_name:watch('jersey_name'),number:watch('number')},{keepDefaultValues:true});},[selectedPreset,reset,watch]);
   const dirty=isDirty||externalDirty;
@@ -30,6 +42,10 @@ export default function StudioUniformEditor({design:saved,revision,isTeam,editab
   function change<K extends keyof StudioUniformDesign>(key:K,value:StudioUniformDesign[K]) {setValue(key,value as never,{shouldDirty:true,shouldValidate:true});setMessage('');}
   const preview=isTeam&&lettering?personalizeUniform(design,lettering):design;
   const patternKey=view==='front'?'front_pattern':'back_pattern';
+  const imageRole=parts==='emblem'?'emblem':patternKey,imageRef=design[imageRole];
+  const rewardAssets = rewardInventory?.items.filter(reward => reward.kind === parts) ?? [];
+  function palette(role:'front_pattern'|'back_pattern'|'emblem',colors:Record<string,string>){const next={...design.part_colors};if(Object.keys(colors).length)next[role]=colors;else delete next[role];change('part_colors',Object.keys(next).length?next:undefined);}
+  function selectImage(role:'front_pattern'|'back_pattern'|'emblem',value:StudioUniformDesign[typeof role]){change(role,value);palette(role,{});}
   return <form className="pp-uniform-editor pp-studio-editor" onSubmit={handleSubmit(async value=>{
     if(!editable||!online||!ready)return;setMessage('');
     try{await onSave(value,revision);reset(value);setMessage('ユニフォームを保存しました。');}catch(e){setMessage(e instanceof Error?e.message:'保存できませんでした。');}
@@ -49,10 +65,26 @@ export default function StudioUniformEditor({design:saved,revision,isTeam,editab
     <fieldset className="pp-uniform-controls" disabled={!editable||isSubmitting}><legend className="pp-uniform-sr-only">ユニフォーム工房</legend>
       <section><div className="pp-uniform-heading"><h3>素材を組み合わせる</h3><InfoHint label="素材と保存" text="本体・表裏の柄・エンブレムを選んで組み合わせます。追加素材のバージョンは保存時に固定され、後から更新されても自分の服は変わりません。"/></div>
         <div className="pp-uniform-choices">{([['model','服本体'],['pattern','柄'],['emblem','エンブレム']] as const).map(([v,name])=><button type="button" key={v} aria-pressed={parts===v} onClick={()=>setParts(v)}>{name}</button>)}</div>
-        {parts==='pattern'&&<Choices label={view==='front'?'正面の基本柄':'背面の基本柄'} options={patterns} value={design[patternKey]} onChange={v=>change(patternKey,v)}/>}
-        {parts==='emblem'&&<Choices label="基本エンブレム" options={emblems} value={design.emblem} onChange={v=>change('emblem',v)}/>}
+        {parts==='pattern'&&<Choices label={view==='front'?'正面の基本柄':'背面の基本柄'} options={STUDIO_PATTERN_CHOICES} value={design[patternKey]} onChange={v=>selectImage(patternKey,v)}/>}
+        {parts==='emblem'&&<Choices label="基本エンブレム" options={STUDIO_EMBLEM_CHOICES} value={design.emblem} onChange={v=>selectImage('emblem',v)}/>}
+        {personalRewards && !isTeam && parts !== 'model' && <div>
+          {rewardAssets.length > 0 && <div className="pp-uniform-field"><span>宝箱で獲得した素材</span>
+            <div className="pp-uniform-choices pp-studio-many-choices" role="group" aria-label="宝箱で獲得した素材">
+              {rewardAssets.map(reward => <button key={reward.id} type="button"
+                aria-pressed={typeof imageRef === 'string' ? imageRef === reward.builtin_code
+                  : imageRef.id === reward.asset?.id && imageRef.revision === reward.asset?.revision}
+                onClick={() => { const value = reward.asset ?? reward.builtin_code; if (value) selectImage(imageRole, value); }}>
+                {reward.name}
+              </button>)}
+            </div>
+          </div>}
+          {rewardError && <p role="status">宝箱の素材を読み込めませんでした。ユニフォーム画面を開き直してください。</p>}
+          {rewardInventory && !rewardAssets.length && <p>まだ獲得した素材はありません。</p>}
+          {!!rewardInventory?.completion_badges && <p>宝箱の達成記念バッジ {rewardInventory.completion_badges} 個</p>}
+        </div>}
         <UniformAssetPicker key={parts} kind={parts} value={parts==='model'?design.model:parts==='pattern'&&typeof design[patternKey]==='object'?design[patternKey] as {id:string;revision:number}:parts==='emblem'&&typeof design.emblem==='object'?design.emblem:undefined}
-          onSelect={ref=>change(parts==='model'?'model':parts==='pattern'?patternKey:'emblem',ref)}/>
+          onSelect={ref=>parts==='model'?change('model',ref):selectImage(imageRole,ref)}/>
+        {parts!=='model'&&typeof imageRef==='object'&&<UniformPartColors assetRef={imageRef} label={imageRole==='emblem'?'エンブレム':view==='front'?'正面の柄':'背面の柄'} palette={design.part_colors?.[imageRole]} onChange={colors=>palette(imageRole,colors)}/>}
       </section>
       <section><h3>生地・色</h3><Choices label="生地" options={[['knit','ニット'],['mesh','メッシュ'],['pique','鹿の子']]} value={design.fabric} onChange={v=>change('fabric',v)}/>
         <div className="pp-uniform-colors">{([['body','本体'],['accent','柄・差し色'],['detail','装飾'],['text','文字']] as const).map(([key,name])=><label key={key}><input type="color" aria-label={name+'の色'} {...register(`colors.${key}`)}/><span>{name}</span></label>)}</div>

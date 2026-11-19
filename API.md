@@ -14,11 +14,12 @@ PhysiProof のバックエンド API (Hono + Cloudflare Worker) の仕様書で�
 
 ### 2. 認証 (Authentication)
 認証が必要なエンドポイントは、`firebaseAuth` ミドルウェアによって保護されています。
-リクエスト送信時、Firebase Authentication から取得した JWT (IDトークン) を以下のヘッダーに付与する必要があります。
+リクエスト送信時、`POST /api/auth/login`のパスワード認証で発行された`accessToken`を以下のヘッダーに付与します（2026-10-22更新）。
 ```http
-Authorization: Bearer <firebase_id_token>
+Authorization: Bearer <accessToken>
 ```
-* サーバー側では、デコードされたトークンからユーザーID (`firebaseUser.sub`) を取得し、所有権の検証を行っています。
+* サーバー側では、D1にハッシュ保存したセッションの有効期限・ユーザー存在を検証し、`firebaseUser.sub`に本人IDを設定します。任意UIDのtest-tokenや未検証JWTは本番では認証できません。
+* 新規登録には`age`（1〜120の整数）が必要です。年齢・公開範囲、地図履歴API、端末キャッシュと互換性の詳細は[プロフィール領域マップの仕様](./docs/profile-territory-maps.md)を参照してください。`POST /api/auth/logout`で現在のセッションを失効できます。
 
 ### 3. バリデーション & エラーレスポンス
 リクエストボディは Zod スキーマに基づいて自動的に検証されます。バリデーションエラーが発生した場合、以下の共通フォーマットで `400 Bad Request` が返却されます。
@@ -64,7 +65,8 @@ Authorization: Bearer <firebase_id_token>
   {
     "loginId": "user123", // 必須、3文字以上
     "password": "securepassword", // 必須、6文字以上
-    "name": "山田 太郎" // 必須、1文字以上
+    "name": "山田 太郎", // 必須、1文字以上
+    "age": 28 // 必須、1〜120の整数
   }
   ```
 * **レスポンス (200 OK)**:
@@ -90,6 +92,8 @@ Authorization: Bearer <firebase_id_token>
   {
     "success": true,
     "userId": "uuid-string",
+    "accessToken": "password-issued-opaque-session",
+    "territory_map_visibility": "private",
     "name": "山田 太郎",
     "avatar_id": "default",
     "avatar_image": null, // base64画像データがある場合は文字列
@@ -947,4 +951,8 @@ GPSによるトラッキングデータに基づき、新規の支配領域（�
 
 カタログ応答: `{items,total,categories,storage_ready}`。画像本体・原稿は一覧には含めません。`kind=model` はモデルJSON、`kind=pattern/emblem` は安全に変換されたPNG＋サムネイルと任意の図形原稿を送ります。共有スキーマは `packages/shared/src/schemas/uniform-studio.schema.ts`、詳細と上限は [工房ガイド](./docs/uniform-studio.md) を参照してください。
 
-`0034` は素材親レコード、追記専用バージョン、期限付き管理者セッションのみを追加し、既存デザインのJSON／リビジョンは変更しません。R2バインディング未設定の画像保存は503で明示的に拒否します。モデル定義はR2なしでも保存できます。
+`0034` は素材親レコード、追記専用バージョン、期限付き管理者セッションを、`0035` は保存容量・書き込みの予約台帳を追加します。既存デザインのJSON／リビジョンは変更しません。画像は `UNIFORM_ASSETS_KV`（Workers KV）に保存し、旧R2参照だけ任意の `UNIFORM_ASSETS` から読みます。未接続なら503で拒否します。モデル定義は画像保存先なしでも保存できます。
+
+素材一覧レスポンスの `storage_ready` に加え、`storage` に `provider`（kv/r2/unconfigured）、`used_bytes`（未完了・失敗予約を含む）、`capacity_bytes`、`writes_reserved_today`、`daily_object_write_budget`、`retry_after_seconds` を返します。本アプリの安全上限は900MB／1日900オブジェクト書込です。画像は2書込、図形原稿付きは3書込を保存前に原子的に予約し、容量・回数不足では413を返します。回数はUTC 00:00にリセットします。失敗分は応答不明の書込を過小評価しないため保守的に予約を保持します。
+
+保存済みKVキーの反映待ちは503、`Retry-After: 30`、`Cache-Control: no-store`を返します。公開前下書きや未知のバージョンの404と区別します。正常な公開PNGは不変URLで長期キャッシュ、管理者画像・原稿は `private, no-store` です。

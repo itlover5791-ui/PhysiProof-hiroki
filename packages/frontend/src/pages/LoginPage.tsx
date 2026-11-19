@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { loginSchema, signupSchema, type LoginRequest, type SignupRequest } from '@my-app/shared';
 import { useNavigate } from 'react-router-dom';
 import client from '../lib/hc';
+import { GoogleButton } from '../components/GoogleAuth';
 import AppIcon from '../components/AppIcon';
 
 const LoginPage: React.FC = () => {
@@ -42,7 +43,10 @@ const LoginPage: React.FC = () => {
       if (!res.ok || 'error' in result) {
         handleError(result);
       } else {
-        localStorage.setItem('physiproof_user', JSON.stringify(result));
+        const { accessToken, uniformAdminToken, ...profile } = result as any;
+        localStorage.setItem('physiproof_access_token', accessToken);
+        localStorage.setItem('physiproof_user', JSON.stringify(profile));
+        window.dispatchEvent(new Event('physiproof-session-restored'));
         localStorage.setItem('physiproof_test_uid', (result as any).userId);
         localStorage.removeItem('physiproof_uniform_admin_token');
         if ('uniformAdminToken' in result && typeof result.uniformAdminToken === 'string') {
@@ -116,7 +120,7 @@ const LoginPage: React.FC = () => {
           letterSpacing: '-0.03em',
           filter: 'drop-shadow(0 0 10px rgba(0,255,136,0.25))'
         }}>
-          PhysiProof
+          foope
         </h1>
         <p style={{ color: '#8a8a93', textAlign: 'center', marginBottom: '2rem', fontSize: '0.85rem', fontWeight: 500 }}>
           {isSignup ? '次世代運動証明システム・新規登録' : 'GPS陣地ゲーム・サインイン'}
@@ -134,7 +138,17 @@ const LoginPage: React.FC = () => {
           </div>
         )}
  
+        <GoogleButton />
         <form onSubmit={isSignup ? signupForm.handleSubmit(onSignup) : loginForm.handleSubmit(onLogin)} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+          {isSignup && (
+            <div>
+              <label htmlFor="signup-age" style={labelStyle}>年齢</label>
+              <input id="signup-age" type="number" inputMode="numeric" min={1} max={120}
+                {...signupForm.register('age', { valueAsNumber: true })} style={inputStyle} placeholder="例：20" />
+              <small style={{ color: '#aab2c0', display: 'block', marginTop: 6 }}>他のユーザーには年齢そのものではなく、年代だけが表示されます。</small>
+              {signupForm.formState.errors.age && <span style={errorStyle}>{signupForm.formState.errors.age.message}</span>}
+            </div>
+          )}
           {isSignup && (
             <div>
               <label style={labelStyle}>表示名</label>

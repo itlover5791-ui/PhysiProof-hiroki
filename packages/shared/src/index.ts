@@ -4,6 +4,12 @@
 export * from './schemas/pushup.schema';
 export * from './schemas/meal.schema';
 export * from './schemas/auth.schema';
+export * from './schemas/profile-map.schema';
+export * from './schemas/running-trends.schema';
+export * from './schemas/run-telemetry.schema';
+export * from './schemas/running-place.schema';
+export * from './logic/runTelemetry';
+export * from './schemas/profile-vitals.schema';
 export * from './schemas/prediction';
 export * from './schemas/core';
 export * from './schemas/achievement';
@@ -24,7 +30,14 @@ export * from './schemas/friend.schema';
 export * from './schemas/uniform.schema';
 export * from './schemas/uniform-studio.schema';
 export * from './logic/uniformStudio';
+export * from './logic/uniformStudioPresets';
 export * from './logic/uniforms';
 export * from './schemas/uniform-template.schema';
 
 
+export * from './schemas/uniform-regions.schema';
+export * from './logic/uniformRegions';
+export * from './schemas/running-course.schema';
+export * from './logic/runningCourses';
+export * from './schemas/external-running.schema';
+export * from './schemas/map-chest.schema';

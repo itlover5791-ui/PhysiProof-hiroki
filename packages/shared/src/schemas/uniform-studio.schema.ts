@@ -1,8 +1,13 @@
 import { z } from 'zod';
+import { uniformColorRegionsSchema, uniformRegionSummarySchema, uniformPartColorsSchema } from './uniform-regions.schema';
 
 export const UNIFORM_IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 export const UNIFORM_THUMBNAIL_MAX_BYTES = 128 * 1024;
 export const UNIFORM_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
+// Leave room below the account-wide 1GB/1,000-write Free KV limits.
+export const UNIFORM_STORAGE_BUDGET_BYTES = 900000000;
+export const UNIFORM_DAILY_OBJECT_WRITE_BUDGET = 900;
+export const UNIFORM_STORAGE_RETRY_SECONDS = 30;
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const id = z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/);
 const path = z.string().max(20000).regex(/^[MmLlHhVvCcSsQqTtAaZzEe0-9+.,\s-]*$/);
@@ -19,8 +24,17 @@ export const uniformModelDefinitionSchema = z.object({
 export type UniformModelDefinition = z.infer<typeof uniformModelDefinitionSchema>;
 export const uniformAssetRefSchema = z.object({ id, revision: z.number().int().min(1).max(1000000) }).strict();
 export type UniformAssetRef = z.infer<typeof uniformAssetRefSchema>;
-export const studioPatternSchema = z.union([z.enum(['none', 'stripe', 'block', 'shoulder']), uniformAssetRefSchema]);
-export const studioEmblemSchema = z.union([z.enum(['none', 'shield', 'star', 'monogram', 'circle']), uniformAssetRefSchema]);
+export const STUDIO_PATTERN_CHOICES = [
+  ['none', 'なし'], ['stripe', 'ストライプ'], ['block', 'ブロック'], ['shoulder', '肩切替'],
+  ['velocity', 'スピードエッジ'], ['tidal', 'タイダルウェーブ'], ['horizon', 'サンセット'],
+  ['contour', '等高線'], ['pinstripe', 'ピンストライプ'], ['pixel', 'ピクセルラッシュ'],
+] as const;
+export const STUDIO_EMBLEM_CHOICES = [
+  ['none', 'なし'], ['shield', 'シールド'], ['star', 'スター'], ['monogram', 'モノグラム'], ['circle', 'サークル'],
+  ['comet', 'コメット'], ['summit', 'サミット'], ['orbit', 'オービット'], ['spark', 'スパーク'],
+] as const;
+export const studioPatternSchema = z.union([z.enum(['none', 'stripe', 'block', 'shoulder', 'velocity', 'tidal', 'horizon', 'contour', 'pinstripe', 'pixel', 'chest-ripple', 'chest-switchback', 'chest-aurora']), uniformAssetRefSchema]);
+export const studioEmblemSchema = z.union([z.enum(['none', 'shield', 'star', 'monogram', 'circle', 'comet', 'summit', 'orbit', 'spark', 'chest-sprout', 'chest-compass', 'chest-crown']), uniformAssetRefSchema]);
 export const studioFontSchema = z.enum(['athletic', 'serif', 'sans', 'mono']);
 export const studioUniformDesignSchema = z.object({
   version: z.literal(2), model: uniformAssetRefSchema,
@@ -32,6 +46,7 @@ export const studioUniformDesignSchema = z.object({
   name_font: studioFontSchema, number_font: studioFontSchema,
   name_position: z.enum(['high', 'middle', 'low']), number_position: z.enum(['high', 'middle', 'low']),
   name_size: z.number().int().min(12).max(32), number_size: z.number().int().min(60).max(150),
+  part_colors: uniformPartColorsSchema.optional(),
 }).strict();
 export type StudioUniformDesign = z.infer<typeof studioUniformDesignSchema>;
 
@@ -66,11 +81,17 @@ export const uniformDrawingSourceSchema = z.object({
   }
 });
 export type UniformDrawingSource = z.infer<typeof uniformDrawingSourceSchema>;
+export const uniformAssetSourceSchema = z.object({
+  format: z.literal('uniform-studio-asset-source'), version: z.literal(1),
+  drawing: uniformDrawingSourceSchema.optional(), color_regions: uniformColorRegionsSchema.optional(),
+}).strict().refine(v => !!(v.drawing || v.color_regions) && new TextEncoder().encode(JSON.stringify(v)).length <= UNIFORM_SOURCE_MAX_BYTES,
+  '部位マップと図形原稿は合計2MB以内です。');
 
 export const uniformAssetMetadataSchema = z.object({
   name: z.string().trim().min(1).max(60), category: z.string().trim().min(1).max(30),
   description: z.string().trim().max(160), status: z.enum(['draft', 'published', 'hidden']),
   sort_order: z.number().int().min(0).max(999999), revision: z.number().int().min(0),
+  reward_only: z.boolean().optional(),
 });
 const png = z.string().startsWith('data:image/png;base64,');
 const imagePayload = uniformAssetMetadataSchema.extend({
@@ -78,15 +99,26 @@ const imagePayload = uniformAssetMetadataSchema.extend({
   thumbnail_data_url: png.max(Math.ceil(UNIFORM_THUMBNAIL_MAX_BYTES / 3) * 4 + 22),
   color_mode: z.enum(['original', 'tint']), placement: z.enum(['body', 'all', 'repeat']),
   scale: z.number().int().min(20).max(180), drawing_source: uniformDrawingSourceSchema.optional(),
+  color_regions: uniformColorRegionsSchema.optional(),
 });
 export const saveUniformAssetSchema = z.discriminatedUnion('kind', [
   uniformAssetMetadataSchema.extend({ kind: z.literal('model'), model_definition: uniformModelDefinitionSchema }).strict(),
   imagePayload.extend({ kind: z.literal('pattern') }).strict(),
   imagePayload.extend({ kind: z.literal('emblem') }).strict(),
 ]).superRefine((asset, ctx) => {
+  if (asset.kind === 'model' && asset.reward_only) {
+    ctx.addIssue({ code: 'custom', message: '宝箱専用素材は柄とエンブレムです。' });
+  }
   if (asset.kind !== 'model' && asset.drawing_source && (asset.drawing_source.document.kind !== asset.kind
     || new TextEncoder().encode(JSON.stringify(asset.drawing_source)).length > UNIFORM_SOURCE_MAX_BYTES)) {
     ctx.addIssue({ code: 'custom', message: '素材と原稿の種類・サイズが一致しません。' });
+  }
+  if (asset.kind !== 'model' && asset.color_regions
+    && new TextEncoder().encode(JSON.stringify({ format:'uniform-studio-asset-source', version:1, drawing: asset.drawing_source, color_regions: asset.color_regions })).length > UNIFORM_SOURCE_MAX_BYTES) {
+    ctx.addIssue({ code: 'custom', message: '部位マップと図形原稿は合計2MB以内です。' });
+  }
+  if (asset.kind !== 'model' && asset.color_regions && asset.color_mode !== 'original') {
+    ctx.addIssue({ code: 'custom', message: '部位別カラーでは元の配色を指定してください。' });
   }
 });
 export type SaveUniformAsset = z.infer<typeof saveUniformAssetSchema>;
@@ -96,6 +128,7 @@ export const uniformAssetSchema = uniformAssetMetadataSchema.extend({
   color_mode: z.enum(['original', 'tint']), placement: z.enum(['body', 'all', 'repeat']), scale: z.number(),
   model_definition: uniformModelDefinitionSchema.nullable(), image_path: z.string().nullable(), thumbnail_path: z.string().nullable(),
   drawing_available: z.boolean(),
+  color_regions: uniformRegionSummarySchema.optional(),
 }).strict();
 export type UniformAsset = z.infer<typeof uniformAssetSchema>;
 export const uniformAssetQuerySchema = z.object({
@@ -103,6 +136,18 @@ export const uniformAssetQuerySchema = z.object({
   search: z.string().trim().max(80).default(''), category: z.string().trim().max(30).default(''),
   page: z.string().regex(/^[1-9]\d{0,4}$/).default('1'), limit: z.enum(['12', '24']).default('12'),
 });
-export const adminUniformAssetQuerySchema = uniformAssetQuerySchema.extend({ status: z.enum(['all', 'draft', 'published', 'hidden']).default('all') });
-export const uniformAssetListSchema = z.object({ items: z.array(uniformAssetSchema), total: z.number().int().nonnegative(), categories: z.array(z.string()), storage_ready: z.boolean() });
+export const adminUniformAssetQuerySchema = uniformAssetQuerySchema.extend({
+  status: z.enum(['all', 'draft', 'published', 'hidden']).default('all'),
+  reward_only: z.enum(['true']).optional(),
+});
+export const uniformStorageStatusSchema = z.object({
+  provider: z.enum(['kv','r2','unconfigured']),
+  used_bytes: z.number().int().nonnegative(),
+  capacity_bytes: z.number().int().positive(),
+  writes_reserved_today: z.number().int().nonnegative(),
+  daily_object_write_budget: z.number().int().positive(),
+  retry_after_seconds: z.number().int().positive(),
+});
+export type UniformStorageStatus = z.infer<typeof uniformStorageStatusSchema>;
+export const uniformAssetListSchema = z.object({ items: z.array(uniformAssetSchema), total: z.number().int().nonnegative(), categories: z.array(z.string()), storage_ready: z.boolean(), storage: uniformStorageStatusSchema.optional() });
 export type UniformAssetList = z.infer<typeof uniformAssetListSchema>;

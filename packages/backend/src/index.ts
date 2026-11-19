@@ -1,3 +1,6 @@
+import { googleAuth, type GoogleBindings } from './routes/googleAuth';
+import { getSessionToken } from './middleware/auth';
+import { deleteCookie } from 'hono/cookie';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { zValidator } from '@hono/zod-validator';
@@ -14,7 +17,20 @@ import { uniformRoutes } from './routes/uniforms';
 import { publishedUniformTemplateRoutes, adminUniformTemplateRoutes } from './routes/uniformTemplates';
 import { uniformAssetRoutes, adminUniformAssetRoutes } from './routes/uniformAssets';
 import {issueUniformAdminSession} from './services/uniformAdminSession';
-import type { R2Bucket } from '@cloudflare/workers-types';
+import { hashPassword, verifyPassword, issueSession, tokenHash } from './services/authSession';
+import { profileMapRoutes } from './routes/profileMaps';
+import { runningTrendRoutes } from './routes/runningTrends';
+import { profileVitalsRoutes } from './routes/profileVitals';
+import { runTelemetryRoutes } from './routes/runTelemetry';
+import { runningPlaceRoutes, adminRunningPlaceRoutes } from './routes/runningPlaces';
+import {runningCourseRoutes,profileCourseRoutes,courseRewardRoutes} from './routes/runningCourses';
+import {courseRewardStatements} from './services/runningCourses';
+import {externalRunningRoutes} from './routes/externalRunning';
+import { mapChestRoutes } from './routes/mapChests';
+import { adminChestRewardRoutes } from './routes/adminChestRewards';
+import { chestResult, claimChest, readChestTier } from './services/mapChests';
+import { ageBand, territoryMapQuerySchema } from '@my-app/shared';
+import type { R2Bucket, KVNamespace } from '@cloudflare/workers-types';
 import { battleMapRoutes } from './routes/battleMaps';
 import { canRunBattle, captureIsolated, loadBattleMaps, sharedCaptureStatement } from './services/battleMaps';
 import type { BattleRecord } from './services/battleMaps';
@@ -55,9 +71,10 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
   }
 }
 
-type Bindings = {
+type Bindings = GoogleBindings & {
   DB: D1Database;
   UNIFORM_ASSETS?: R2Bucket;
+  UNIFORM_ASSETS_KV?: KVNamespace;
   GEMINI_API_KEY: string;
   GEMINI_API_KEY_MAP?: string;
 };
@@ -80,7 +97,6 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 // バリデーションエラーを文字列で返すための共通設定
 const validate = (schema: any) => zValidator('json', schema, (result, c) => {
   if (!result.success) {
-    console.log('Validation failed. Input:', result.data); // デバッグ用
     const messages = result.error.issues.map(i => {
       if (i.code === 'invalid_type' && (i as any).received === 'undefined') return '入力が不足しています';
       return i.message;
@@ -93,10 +109,24 @@ const validate = (schema: any) => zValidator('json', schema, (result, c) => {
 app.use('*', cors({
   origin: '*', // 開発環境のため全許可 (本番では制限推奨)
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-Uniform-Admin-Token'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Uniform-Admin-Token', 'If-None-Match'],
+  exposeHeaders: ['ETag'],
 }));
 
 const routes = app
+  .route('/auth/google',googleAuth)
+  .route('/map-chests', mapChestRoutes)
+  .route('/admin/chest-rewards', adminChestRewardRoutes)
+  .route('/running/external',externalRunningRoutes)
+  .route('/running/courses',runningCourseRoutes)
+  .route('/running/rewards',courseRewardRoutes)
+  .route('/profiles',profileCourseRoutes)
+  .route('/running', runTelemetryRoutes)
+  .route('/running/places', runningPlaceRoutes)
+  .route('/admin/running-places', adminRunningPlaceRoutes)
+  .route('/users/me/vitals', profileVitalsRoutes)
+  .route('/running/trends', runningTrendRoutes)
+  .route('/profiles', profileMapRoutes)
   .route('/uniforms/templates', publishedUniformTemplateRoutes)
   .route('/admin/uniform-templates', adminUniformTemplateRoutes)
   .route('/uniforms', uniformRoutes)
@@ -108,13 +138,13 @@ const routes = app
     '/auth/signup',
     validate(signupSchema),
     async (c) => {
-      const { loginId, password, name } = c.req.valid('json');
+      const { loginId, password, name, age } = c.req.valid('json');
       const db = c.env.DB;
       
       const id = crypto.randomUUID();
       try {
-        await db.prepare('INSERT INTO users (id, login_id, password_hash, name) VALUES (?, ?, ?, ?)')
-          .bind(id, loginId, password, name) // 本来はハッシュ化が必要
+        await db.prepare('INSERT INTO users (id, login_id, password_hash, name, age) VALUES (?, ?, ?, ?, ?)')
+          .bind(id, loginId, await hashPassword(password), name, age)
           .run();
         return c.json({ success: true, userId: id });
       } catch (e: any) {
@@ -140,17 +170,18 @@ const routes = app
       try {
         user = await db.prepare(`
           SELECT 
-            u.id, u.name, u.avatar_id, u.avatar_image, u.login_id, u.role, 
+            u.id, u.name, u.avatar_id, u.avatar_image, u.login_id, u.role, u.password_hash, u.territory_map_visibility,
             u.current_weight, u.target_weight, u.target_calories_burned, u.target_calories_consumed, 
-            u.gender, u.age, u.height, u.level, u.xp, u.status_points, 
+            u.gender, u.age, u.height, u.level, u.xp, u.status_points,
             u.stat_str, u.stat_agi, u.stat_def, u.stat_vit, u.team_id, t.name as team_name
           FROM users u
           LEFT JOIN teams t ON u.team_id = t.id
-          WHERE u.login_id = ? AND u.password_hash = ?
+          WHERE u.login_id = ?
         `)
-          .bind(loginId, password)
+          .bind(loginId)
           .first<{ 
-            id: string, name: string, avatar_id: string, avatar_image: string | null, login_id: string, role: string, 
+            id: string, name: string, avatar_id: string, avatar_image: string | null, login_id: string, role: string,
+            password_hash: string | null, territory_map_visibility: 'private' | 'friends',
             current_weight: number | null, target_weight: number | null, target_calories_burned: number | null, 
             target_calories_consumed: number | null, gender: string | null, age: number | null, height: number | null, 
             level: number, xp: number, status_points: number, stat_str: number, stat_agi: number, stat_def: number, stat_vit: number,
@@ -165,9 +196,20 @@ const routes = app
         }, 500);
       }
         
-      if (!user) {
+      if (!user?.password_hash || !await verifyPassword(password, user.password_hash)) {
         return c.json({ error: 'IDまたはパスワードが正しくありません。' }, 401);
       }
+      if (!user.password_hash.startsWith('pbkdf2:')) {
+        const upgradedHash = await hashPassword(password);
+        const updated = await db.prepare('UPDATE users SET password_hash=? WHERE id=? AND password_hash=?')
+          .bind(upgradedHash, user.id, user.password_hash).run();
+        if (!updated.meta.changes) return c.json({ error: '認証情報が更新されました。もう一度ログインしてください。' }, 401);
+        user.password_hash = upgradedHash;
+      }
+      let accessToken: string;
+      try { accessToken = await issueSession(db, user.id, user.password_hash); }
+      catch { return c.json({ error: 'ログインを完了できませんでした。もう一度ログインしてください。' }, 401); }
+      c.header('Cache-Control', 'no-store');
       let uniformAdminToken: string | undefined;
       if (user.role === 'admin') {
         try { uniformAdminToken = await issueUniformAdminSession(db, user.id); }
@@ -178,6 +220,8 @@ const routes = app
         success: true, 
         userId: user.id, 
         uniformAdminToken,
+        accessToken,
+        territory_map_visibility: user.territory_map_visibility,
         name: user.name, 
         avatar_id: user.avatar_id || 'default',
         avatar_image: user.avatar_image || null,
@@ -202,6 +246,12 @@ const routes = app
       });
     }
   )
+  .post('/auth/logout', firebaseAuth, async c => {
+    const token = getSessionToken(c)!;
+    await c.env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash=?').bind(await tokenHash(token)).run();
+    deleteCookie(c,'__Host-pp_session',{path:'/',secure:true});
+    return c.json({ success: true });
+  })
   .post(
     '/pushups',
     firebaseAuth,
@@ -400,7 +450,7 @@ const routes = app
     validate(startRunningSessionSchema),
     async (c) => {
       const user = c.get('firebaseUser');
-      const { activity_mode, battle_id } = c.req.valid('json');
+      const { activity_mode, battle_id, course_id, chest_id } = c.req.valid('json');
       const db = c.env.DB;
 
       try {
@@ -432,10 +482,17 @@ const routes = app
         }
 
         const sessionId = crypto.randomUUID();
-        await db.prepare(`
-          INSERT INTO running_sessions (id, user_id, activity_mode, team_id, battle_id, started_at)
-          VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-        `).bind(sessionId, user.sub, activity_mode, teamId, battle_id ?? null).run();
+        if(course_id&&!await db.prepare('SELECT id FROM running_courses WHERE id=? AND user_id=? AND archived=0').bind(course_id,user.sub).first())return c.json({error:'自分の有効なコースを選択してください。'},409);
+        const started=await db.prepare(`
+          INSERT INTO running_sessions (id, user_id, activity_mode, team_id, battle_id, started_at, course_id, chest_id)
+          SELECT ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?
+          WHERE (? IS NULL OR EXISTS(SELECT 1 FROM running_courses WHERE id=? AND user_id=? AND archived=0))
+            AND (? IS NULL OR EXISTS(SELECT 1 FROM map_chests c
+              WHERE c.id=? AND c.expires_at>? AND NOT EXISTS (
+                SELECT 1 FROM map_chest_claims r WHERE r.user_id=? AND r.chest_id=c.id)))
+        `).bind(sessionId, user.sub, activity_mode, teamId, battle_id ?? null, course_id ?? null, chest_id ?? null,
+          course_id ?? null, course_id ?? null, user.sub, chest_id ?? null, chest_id ?? null, Date.now(), user.sub).run();
+        if (!started.meta.changes) return c.json({ error: 'コースまたは宝箱が利用できません。選び直してください。' }, 409);
 
         return c.json({ success: true, session_id: sessionId, activity_mode, team_id: teamId }, 201);
       } catch (e) {
@@ -458,7 +515,8 @@ const routes = app
         if (!result.meta.changes) {
           return c.json({ error: '走行セッションが無効です。オンラインで再開してください。' }, 409);
         }
-        return c.json({ success: true });
+        const motion = await db.prepare('SELECT sequence FROM running_motion WHERE session_id=?').bind(c.req.param('id')).first<{ sequence: number }>();
+        return c.json({ success: true, next_sequence: (motion?.sequence ?? -1) + 1 });
       } catch (e) {
         console.error('Failed to heartbeat running session:', e);
         return c.json({ error: '走行状態を確認できませんでした。' }, 500);
@@ -481,11 +539,16 @@ const routes = app
 
       try {
         const session = await db.prepare(`
-          SELECT activity_mode, team_id, status FROM running_sessions
+          SELECT activity_mode, team_id, status, course_id, chest_id FROM running_sessions
           WHERE id = ? AND user_id = ?
-        `).bind(sessionId, user.sub).first<{ activity_mode: 'personal' | 'team'; team_id: string | null; status: string }>();
+        `).bind(sessionId, user.sub).first<{ activity_mode: 'personal' | 'team'; team_id: string | null; status: string; course_id: string | null; chest_id: string | null }>();
         if (!session) return c.json({ error: '走行セッションが見つかりません。' }, 404);
+        if (session.chest_id && session.status === 'completed') {
+          return c.json({ success: true, activity_mode: session.activity_mode, team_id: session.team_id,
+            chest: await chestResult(db, user.sub, sessionId) });
+        }
         if (session.status !== 'active') return c.json({ error: 'この走行セッションはすでに終了しています。' }, 409);
+        const chestTier = session.chest_id && distance_m > 0 ? await readChestTier(db, sessionId, session.chest_id) : null;
 
         const results = await db.batch([
           db.prepare(`
@@ -510,15 +573,23 @@ const routes = app
               AND s.team_id IS NOT NULL
               AND ((b.map_rules_version = 0 AND s.battle_id IS NULL) OR b.id = s.battle_id)
           `).bind(sessionId),
+          ...(session.course_id?courseRewardStatements(db,user.sub):[]),
+          ...(chestTier ? [claimChest(db, sessionId, user.sub, chestTier)] : []),
         ]);
 
         if (!results[0].meta.changes) {
+          if (session.chest_id && await db.prepare("SELECT id FROM running_sessions WHERE id=? AND user_id=? AND status='completed'")
+            .bind(sessionId, user.sub).first()) {
+            return c.json({ success: true, activity_mode: session.activity_mode, team_id: session.team_id,
+              chest: await chestResult(db, user.sub, sessionId) });
+          }
           return c.json({ error: '走行セッションの有効期限が切れました。オンラインで新しい走行を開始してください。' }, 409);
         }
         if (distance_m > 0) {
           await completeDailyRunningMission(db, user.sub);
         }
-        return c.json({ success: true, activity_mode: session.activity_mode, team_id: session.team_id });
+        return c.json({ success: true, activity_mode: session.activity_mode, team_id: session.team_id,
+          chest: session.chest_id ? await chestResult(db, user.sub, sessionId) : null });
       } catch (e) {
         console.error('Failed to complete running session:', e);
         return c.json({ error: '走行記録を保存できませんでした。' }, 500);
@@ -863,6 +934,9 @@ const routes = app
         }
         batchStatements.push(...updateStatements);
         batchStatements.push(...insertStatements);
+        if (!myTeamId) batchStatements.push(db.prepare(`INSERT INTO personal_territory_history
+          (user_id,claim_key,area_polygon,geometry_json,source) VALUES(?,?,?,?,'capture')`)
+          .bind(user.sub, 'run:' + data.activity_session_id, data.area_polygon, null));
         if (myTeamId) batchStatements.push(sharedCaptureStatement(db, myTeamId, user.sub, data.area_polygon));
 
         if (batchStatements.length > 0) {
@@ -946,22 +1020,31 @@ const routes = app
   )
   .get(
     '/territories',
+    optionalAuth,
+    zValidator('query', territoryMapQuerySchema),
     async (c) => {
       const db = c.env.DB;
+      const { scope, age_band } = c.req.valid('query');
+      const viewer = c.get('firebaseUser');
+      if (scope !== 'all' && !viewer) return c.json({ error: '再ログインしてください。' }, 401);
       try {
-        // デモ用シードデータのクリーンアップ
-        try {
-          await db.prepare("DELETE FROM territories WHERE id IN ('territory-1', 'territory-2')").run();
-        } catch (err) {
-          console.error('Failed to clean up dummy territories:', err);
-        }
-
+        c.header('Cache-Control', scope === 'all' ? 'public, max-age=0, must-revalidate' : 'private, no-store');
+        const revision = scope === 'all' ? await db.prepare('SELECT revision FROM territory_map_revision WHERE id=1').first<{revision:number}>() : null;
+        const etag = revision ? `"territories-${revision.revision}-${age_band ?? 'all'}"` : null;
+        if (etag) c.header('ETag', etag);
+        // Cloudflare can weaken response ETags (W/...) during delivery. GET
+        // validation compares representation tags without the optional weak prefix.
+        if (etag && c.req.header('If-None-Match')?.split(',').some(candidate => {
+          const tag = candidate.trim();
+          return tag === '*' || tag.replace(/^W\//, '') === etag;
+        })) return c.body(null, 304);
         const territories = await db.prepare(`
           SELECT 
             t.id,
             t.user_id,
             t.team_id,
             u.name as user_name,
+            u.age AS owner_age,
             t.latitude,
             t.longitude,
             t.area_polygon,
@@ -972,8 +1055,13 @@ const routes = app
             t.address
           FROM territories t
           JOIN users u ON t.user_id = u.id
-        `).all();
-        return c.json({ territories: territories.results });
+          ${scope === 'mine' ? 'WHERE t.user_id=? AND t.team_id IS NULL' : scope === 'friends' ? `WHERE t.team_id IS NULL AND (t.user_id=? OR (
+            EXISTS(SELECT 1 FROM friends WHERE user_id=? AND friend_id=t.user_id)
+            AND EXISTS(SELECT 1 FROM friends WHERE friend_id=? AND user_id=t.user_id)))` : ''}
+        `).bind(...(scope === 'mine' ? [viewer.sub] : scope === 'friends' ? [viewer.sub,viewer.sub,viewer.sub] : [])).all<{[key:string]:unknown;owner_age:number|null;team_id:string|null}>();
+        const display = territories.results.map(({owner_age,...t}) => ({...t,age_band:ageBand(owner_age)}))
+          .filter(t => !age_band || (t.team_id == null && t.age_band === age_band));
+        return c.json({ territories: display });
       } catch (e: any) {
         console.error('Fetch territories error:', e);
         return c.json({ error: '領域データの取得に失敗しました' }, 500);
@@ -1011,7 +1099,7 @@ const routes = app
 
         if (data.password) {
           updates.push('password_hash = ?');
-          params.push(data.password);
+          params.push(await hashPassword(data.password));
         }
 
         if (data.current_weight !== undefined) {
@@ -1043,6 +1131,10 @@ const routes = app
           updates.push('age = ?');
           params.push(data.age);
         }
+        if (data.territory_map_visibility !== undefined) {
+          updates.push('territory_map_visibility = ?');
+          params.push(data.territory_map_visibility);
+        }
 
         if (data.height !== undefined) {
           updates.push('height = ?');
@@ -1051,9 +1143,14 @@ const routes = app
 
         params.push(user.sub);
 
-        await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`)
-          .bind(...params)
-          .run();
+        const profileUpdate = db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...params);
+        if (data.password) await db.batch([
+          profileUpdate,
+          db.prepare('DELETE FROM auth_sessions WHERE user_id=? AND token_hash!=?')
+            .bind(user.sub, await tokenHash(getSessionToken(c)!)),
+          db.prepare('DELETE FROM uniform_admin_sessions WHERE user_id=?').bind(user.sub),
+        ]);
+        else await profileUpdate.run();
 
         const newUnlocked: string[] = [];
         if (data.avatar_id === 'custom' && data.avatar_image) {
@@ -1085,6 +1182,7 @@ const routes = app
           target_calories_consumed: data.target_calories_consumed !== undefined ? data.target_calories_consumed : null,
           gender: data.gender !== undefined ? data.gender : null,
           age: data.age !== undefined ? data.age : null,
+          territory_map_visibility: data.territory_map_visibility,
           height: data.height !== undefined ? data.height : null,
           newAchievements: newAchievementsData
         });
@@ -1663,7 +1761,7 @@ const routes = app
         // 3. システムプロンプト
         const todayIso = new Date().toISOString();
         const systemInstruction = `
-あなたはPhysiProof（フィジプルーフ）という健康管理・領土獲得ゲームアプリの専属AIパーソナルコーチです。
+あなたはfoopeという健康管理・領土獲得ゲームアプリの専属AIパーソナルコーチです。
 ユーザーは日々の運動記録、食事のカロリー、マップでのテリトリー獲得などを頑張っています。
 ユーザーからの健康、ダイエット、筋トレ、食事に関する質問に対して、専門的でありながら親しみやすくモチベーションを高める口調で答えてください。
 回答は簡潔にし（スマホ画面で見やすいため）、常にポジティブで具体的なアドバイス（例: 「スクワットをあと10回増やしてみよう！」「タンパク質が足りないから鶏胸肉がおすすめ！」など）を心がけてください。
@@ -1933,12 +2031,13 @@ __SCHEDULE_ADD__:{"title":"予定のタイトル","scheduled_at":"ISO8601形式�
           db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_map_menu', body.show_map_menu ?? 'true'),
           db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_uniform_menu', body.show_uniform_menu ?? 'true'),
           db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_exercise_menu', 'false'),
-          db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_ai_predict_menu', body.show_ai_predict_menu ?? 'true'),
+          db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_running_trends_menu', body.show_running_trends_menu ?? 'true'),
+          db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_ai_predict_menu', 'false'),
           db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_meal_menu', body.show_meal_menu ?? 'true'),
           db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_friends_menu', body.show_friends_menu ?? 'true'),
           db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_team_menu', body.show_team_menu ?? 'true'),
           db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_ranking_menu', body.show_ranking_menu ?? 'true'),
-          db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_chat_menu', body.show_chat_menu ?? 'true'),
+          db.prepare('INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)').bind('show_chat_menu', 'false'),
         ];
         await db.batch(statements);
         return c.json({ success: true, message: 'システム設定を更新しました。' });
@@ -1991,7 +2090,7 @@ __SCHEDULE_ADD__:{"title":"予定のタイトル","scheduled_at":"ISO8601形式�
       }
 
       try {
-        const users = await db.prepare('SELECT id, login_id, password_hash as password, name, role, current_weight, target_weight, target_calories_burned, target_calories_consumed, gender, age, height, level, xp, status_points, stat_str, stat_agi, stat_def, stat_vit, created_at FROM users').all();
+        const users = await db.prepare('SELECT id, login_id, name, role, current_weight, target_weight, target_calories_burned, target_calories_consumed, gender, age, height, level, xp, status_points, stat_str, stat_agi, stat_def, stat_vit, created_at FROM users').all();
         return c.json({ users: users.results });
       } catch (e: any) {
         console.error('Admin users error:', e);
@@ -2701,7 +2800,7 @@ __SCHEDULE_ADD__:{"title":"予定のタイトル","scheduled_at":"ISO8601形式�
             u.id, u.name, u.avatar_id, u.avatar_image, u.login_id, u.role, 
             u.current_weight, u.target_weight, u.target_calories_burned, u.target_calories_consumed, 
             u.gender, u.age, u.height, u.level, u.xp, u.status_points, 
-            u.stat_str, u.stat_agi, u.stat_def, u.stat_vit, u.team_id, t.name as team_name,
+            u.stat_str, u.stat_agi, u.stat_def, u.stat_vit, u.team_id, t.name as team_name, u.territory_map_visibility,
             COALESCE(u.legacy_running_distance_m, 0) + COALESCE((
               SELECT SUM(rs.distance_m) FROM running_sessions rs
               WHERE rs.user_id = u.id AND rs.status = 'completed'
@@ -3054,14 +3153,14 @@ __SCHEDULE_ADD__:{"title":"予定のタイトル","scheduled_at":"ISO8601形式�
             (id, team_a_id, team_b_id, created_by, starts_at, ends_at,
              distance_points_per_km, territory_points_per_1000_sqm, scoring_version, holding_points_per_1000_sqm_full_period,
              map_mode, map_rules_version, spots_enabled, spot_holding_multiplier, spot_capture_points, map_latitude, map_longitude, map_radius_m,
-             spot_scope, prefecture_code, prefecture_name, spot_bounds_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             spot_scope, prefecture_code, prefecture_name, spot_bounds_json,territory_lifetime_hours)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).bind(battleId, myTeam.id, data.opponent_team_ids[0], user.sub, data.starts_at, data.ends_at, distancePointsPerKm, territoryPointsPer1000Sqm, holdingPointsPer1000SqmFullPeriod,
             data.map_mode ?? 'shared', data.map_mode ? 1 : 0, Number(data.spots_enabled), BATTLE_SPOT_MULTIPLIER,
             data.spots_enabled ? distancePointsPerKm * BATTLE_SPOT_DISTANCE_EQUIVALENT_KM : 0,
             prefecturePlacement ? null : data.map_latitude ?? null, prefecturePlacement ? null : data.map_longitude ?? null, data.map_radius_m,
             prefecturePlacement ? 'prefecture' : 'radius', prefecturePlacement?.region.code ?? null,
-            prefecturePlacement?.region.name ?? null, prefecturePlacement ? JSON.stringify(prefecturePlacement.bounds) : null),
+            prefecturePlacement?.region.name ?? null, prefecturePlacement ? JSON.stringify(prefecturePlacement.bounds) : null,data.territory_lifetime_hours??null),
           db.prepare(`
             INSERT INTO team_battle_participants
               (battle_id, team_id, role, invitation_status, invited_at, responded_at)
@@ -3345,7 +3444,7 @@ __SCHEDULE_ADD__:{"title":"予定のタイトル","scheduled_at":"ISO8601形式�
             b.scoring_version, b.holding_points_per_1000_sqm_full_period,
             b.status, b.map_mode, b.map_rules_version, b.map_revision, b.spots_enabled, b.spot_holding_multiplier,
             b.spot_capture_points, b.map_latitude, b.map_longitude, b.map_radius_m,
-            b.spot_scope, b.prefecture_code, b.prefecture_name, b.spot_bounds_json,
+            b.spot_scope, b.prefecture_code, b.prefecture_name, b.spot_bounds_json,b.territory_lifetime_hours,
             CASE
               WHEN b.cancelled_at IS NOT NULL THEN 'cancelled'
               WHEN b.status = 'pending' AND julianday(CURRENT_TIMESTAMP) >= julianday(b.starts_at) THEN 'expired'
@@ -3437,7 +3536,7 @@ __SCHEDULE_ADD__:{"title":"予定のタイトル","scheduled_at":"ISO8601形式�
               territory_points_per_1000_sqm: row.territory_points_per_1000_sqm,
               scoring_version: row.scoring_version,
               holding_points_per_1000_sqm_full_period: row.holding_points_per_1000_sqm_full_period,
-              map_mode: 'shared', map_rules_version: 0, spots_enabled: false, spot_holding_multiplier: 1.2,
+              map_mode: 'shared', map_rules_version: 0,territory_lifetime_hours:null, spots_enabled: false, spot_holding_multiplier: 1.2,
               spot_capture_points: 0, map_latitude: null, map_longitude: null, map_radius_m: 2000, spot_count: 0,
               spot_scope: 'radius', prefecture_code: null, prefecture_name: null, spot_bounds: null,
             };

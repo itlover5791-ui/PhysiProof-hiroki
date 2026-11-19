@@ -1,5 +1,22 @@
 # UI verification lessons
 
+## Component fixtures versus the real administrator screen
+- Failure mode: Showing a small in-memory component fixture as a development preview made it look like local and production administrator features differed. A stopped local API and unapplied migrations further obscured the comparison.
+- Detection signal: The local tab was /qa/uniform-studio.html, which mounts only UniformSection/AdminUniformAssets; production uses the full AdminDashboard. Port 8787 was down and migrations 0033-0035 were pending. Production-equivalent bundle hashes matched exactly.
+- Prevention rule: Give fixtures an unmistakable synthetic-data notice and an explicit link to the real app. Use the ordinary /admin route for acceptance testing, start both API/UI and apply local migrations reproducibly. Do not solve data/session differences by copying production secrets, bypassing roles or routing development writes to production.
+
+## Card-free KV storage and real-runtime parity
+- A Free KV namespace can replace inactive R2 without billing enrollment; verify product provisioning separately from OAuth success. Never finish a checkout to unblock a free-storage request.
+- Reserve metered object writes and byte capacity atomically in D1 before upload, including pending/ambiguous failed writes. Commit the reservation with immutable metadata and verify concurrent last-slot uploads, lost update cleanup and no double-counting.
+- Do not cache missing saved KV objects as immutable 404s: eventual propagation needs 503/no-store/retry guidance, bounded cancelable UI retries and a local authoritative preview after upload. Keep draft privacy checks before storage reads.
+- Test the actual installed workerd as well as mocks: current docs allow cacheTtl 30 but this repository's older emulator enforces 60. Use the compatible 60-second provider TTL, with independent 30-second client retries.
+
+## Real storage verification and cloud activation
+- Failure mode: Passing SQLite/fake-R2 tests proves API logic but not actual Worker stream handling or R2 persistence. A successful OAuth refresh also does not mean R2 has been activated on the account.
+- Detection signal: The new workerd/on-disk D1/R2 test passed upload/readback/restart checks; the real Cloudflare bucket-list API separately returned activation error 10042 after authentication succeeded.
+- Prevention rule: Verify runtime persistence and provider provisioning independently. Distinguish missing permissions (10000) from a product activation/checkout requirement (10042); do not add a production binding to a nonexistent bucket or silently complete a subscription/payment step.
+- Migration harness rule: D1 exec() splits on newlines. Use complete prepared statements, with SQLite parsing for multiline triggers, when applying real migrations to the local Worker test fixture.
+
 ## Versioned uniform studio integration
 - Preserve old saved artwork by dispatching an explicit design version to the unchanged legacy renderer. A new renderer is not a transparent migration; conversion requires user choice and save.
 - Save immutable component references and retain published versions after catalogue hiding. Draft metadata, images and editable sources need separate access checks. Test updates, concurrent uploads, hiding and resource reuse against real SQLite transactions, not just mocks.
@@ -46,3 +63,51 @@
 - Detection signal: The user saw the spot map retrieval error; the original live public-park query returned a dispatcher timeout, while a filtered query on the alternate public instance returned 200 and about 94KB of data.
 - Prevention rule: Apply the same public-access filter before output, bound sequential provider attempts, identify the app, respect 406/429 and Retry-After, coalesce identical in-flight lookups, and retain a bounded last-success map separately from cooldown entries. An HTTP 200 with a runtime remark is a partial/error result, not a valid empty map. Optional cache corruption/outage must not turn successful map retrieval into a failed invitation.
 - Safety/verification rule: Never invent spot coordinates, silently remove enabled spots or save a partial invitation. Preserve fixed placement after creation. Test failure/fallback/recent-map expiry with real route/SQLite saving, and separately run the actual generator against public coordinates without contacting real opponents or changing production DB data.
+## Administrator mobile layouts and independent scroll regions
+- Failure mode: A desktop-only horizontal menu hid management sections, default material controls were too small, and fixed minimum grid widths expanded mobile cards. Pinning a wide identity column can also cover the action column after scrolling on a narrow phone.
+- Detection signal: The actual local admin at 390px showed native white buttons and an off-screen active menu. A populated user table at 320/390px needed its full rightmost 230px action cell exposed, not just a document-width assertion.
+- Prevention rule: Use one section registry for mobile selection and desktop navigation; contain table scrolling separately from filters, and disable pinned columns on narrow screens. Verify action bounds, short-height modal close controls, help bounds and 16px inputs as well as page overflow. Keep independent editors mounted when changing their visibility to preserve drafts; verify with synthetic unsaved input.
+- Scope rule: Record an existing external map-provider error separately from UI layout validation; do not claim the map is functional merely because its container fits the viewport.
+## Basemap HTTP success is not visual success
+- Failure mode: The administrator-only CARTO raster source continued returning tile images, but those images contained an API-key-required watermark. The normal running map already used a separate, working provider, so changing general map configuration would not repair the administrator map.
+- Detection signal: Authenticated production visual QA reproduced the watermark; CARTO's current official basemap page confirmed the key requirement. A plain HTTP success check would have missed it.
+- Prevention rule: Verify the exact map component/provider and inspect actual rendered tiles, overlays and attribution. Use the already-installed key-free provider when appropriate, handle background failure/retry explicitly, and abort/dispose map initialization when tabs unmount. Keep terrain/ownership/scoring logic out of a background-provider repair.
+## 2026-10-20 — Check expanded choice sets in their real parent layout
+- Adding many short choices can expose inherited flex/overflow-wrap rules that were harmless with only a few choices. The administrator's `flex: 1` plus anywhere wrapping compressed Japanese pattern labels into tall single-character columns.
+- Verify the actual authenticated administrator and user contexts, not only an isolated preview. For large choice sets, use a component-scoped responsive grid with sufficient specificity; confirm computed geometry and screenshots at a real 390px viewport. Restore unsaved QA changes and reset viewport overrides afterward.
+
+## 2026-10-21 — Verify live color state and canvas save boundaries
+- A browser color input can visibly change while a change-only handler has not committed the value. Verify that the actual preview and dirty/save state change, not just the input's DOM value; use live input plus committed change handling for per-part color pickers.
+- Disabling a fieldset does not disable canvas pointer handlers. Explicitly guard canvas edits during conversion/save, cancel pending animation frames on unmount/stroke end, and prevent saving before asynchronous auto-region work finishes. Keep cancellation/undo consistent with the controlled region value.
+- Region extraction from a sparse transparent image must not assume a regular subsample contains an opaque pixel. Fall back to a bounded opaque-pixel scan before classifying an image as empty.
+- Never bypass an expired administrator proof to complete UI QA. Retain the real form draft, request ordinary re-login, and separately label synthetic in-memory tests and isolated workerd persistence checks.
+
+## 2026-10-21 — General admin access does not prove material-save authorization
+- Failure mode: The general dashboard stayed accessible after the separate password-issued artwork proof expired/rotated. Material creation was enabled before the protected catalogue loaded, and a save-time 403 appeared far above a long image/region editor without a recovery action.
+- Detection signal: Production catalogue access returned the administrator-session error; ordinary human re-login restored catalogue access and a full-size PNG plus 512px region map saved successfully. Capacity/provider failure was not reproduced. A 403 alone does not distinguish expiry from another login rotating the proof.
+- Prevention rule: Gate new material creation on a successfully authorized catalogue, surface re-login/recheck beside the failed save, preserve the mounted draft, and recheck after cross-tab login/focus without copying tokens or submitting automatically. Test no storage reservation/write on rejected proof, then the identical payload after a fresh isolated proof; never weaken expiry or grant new roles to resolve UI QA.
+
+## 2026-10-21 — Bound embedded checkboxes against administrator input styles
+- Failure mode: The administrator's full-width input selector overrode the region checkbox width. The checkbox element occupied the whole 411px label, pushing the anonymous text into a one-character column and inflating the row to 480px.
+- Detection signal: User screenshot plus real-parent computed geometry reproduced a 411px-wide checkbox and 480px label. Checking overall page width and upper editing controls had not detected this inner flex overflow.
+- Prevention rule: Give embedded checkbox labels an explicit fixed control column and a minmax(0,1fr) text span; bound checkbox min/max dimensions with component-scoped specificity. Verify the label text, click target and row height at the editor footer, not only the main form/header. Check label-text clicking and restore the original overlay state without saving artwork.
+
+## 2026-10-22 — Privacy needs authenticated identity, not only hidden controls
+- Failure mode: An arbitrary UID/unsigned JWT was sufficient for protected routes; adding a friend-only history endpoint with that identity would allow impersonation. Existing admin responses also included stored passwords.
+- Prevention: Before shipping restricted location history, replace the identity boundary with password-issued hashed opaque sessions, migrate passwords incrementally, remove password disclosure, and test guessed IDs, expired sessions, pending/one-way friends, unfriend and private settings against actual SQL. Never turn a UI test into a real-account authentication bypass.
+- Actual mobile QA also found the map HUD crossing the existing profile modal. Render account settings through a high-z-index portal, trap focus and verify the real map parent, not just a settings-only fixture.
+- Production verification found Cloudflare delivers a weak `W/` ETag even though the Worker generated a strong tag. Exact header equality caused repeated 200 responses, so conditional GET must compare weak/strong representation tags correctly and accept a tag list. Test the deployed headers and 304, not only a local strong-tag fixture.
+
+## 2026-10-23 — Passage trends and measured steps must mean what they claim
+- A run-start histogram cannot answer when people pass a particular public place. Record consented passage time in registered coarse areas; do not infer historical routes from territories or imply an app-only sample measures actual public crowd occupancy.
+- A calorie/distance-derived number is not a measured step count. Unsupported browsers must say unmeasured; Android OS sensor readings and server-plausible movement are separate totals. A client source label is not hardware attestation.
+- Consent must be separate, default off and snapshotted at run start. Use a consent epoch to prevent an ongoing pre-consent run from being reattached after same-timestamp opt-in or off/on. Check consent and completion inside the atomic write, not just before it.
+- GPS recovery must not credit displacement from a previously stale/future fix. Test races against normal finish, opt-out and replay. Android compilation, synthetic UI and physical-device walking/background verification are distinct evidence levels; report each honestly.
+
+## 2026-10-27 — Verify source separation and full API snapshots
+- Failure mode: Adding a battle setting to inserts/schema but omitting it from the explicit list SELECT made a persisted value disappear in the UI. Test the complete create/list/read path, not just the database row. Migration fixtures must apply all current migrations by default instead of pinning a stale latest filename.
+- Detection signal: Isolated real-SQL tests caught both the missing field and a new migration causing a hardcoded latest-file assertion to fail. Use explicit old versions only in upgrade tests and check foreign keys after all current migrations.
+- Health imports must never enter game session/territory/reward tables. Verify unchanged game rows even after large imports; use independent owner-only storage, explicit consent, revision plus per-operation nonce, all-or-nothing replacement and withdrawal/replay/race tests. Metadata is not device attestation.
+- Older Hono body-limit wraps overflow as malformed JSON before its error detector sees it. Bound streamed bytes before the JSON validator and test actual oversized streamed requests, not just Content-Length. Keep health error responses generic.
+- Native browser confirm dialogs can block automated IAB inspection without appearing to the human. Prefer an explicit accessible in-page two-step deletion confirmation for new controls. Recover with a fresh temporary tab; never dismiss unknown security dialogs or modify real permissions/health data just to finish QA.
+- Concurrent authenticated requests have nondeterministic arrival order. Race tests must accept either CAS winner, assert that the losing request cannot mutate data, and retry a rejected withdrawal with the fresh revision. Do not assert a particular Promise.all argument wins; after a completed withdrawal no stale sync may restore data.

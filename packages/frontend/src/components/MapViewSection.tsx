@@ -5,11 +5,20 @@ import buffer from '@turf/buffer';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import client from '../lib/hc';
-import type { ActivityMode, BattleMapResponse, TeamBattleSummary } from '@my-app/shared';
-import { battleMapResponseSchema } from '@my-app/shared';
+import type { ActivityMode, BattleMapResponse, MapChest, TeamBattleSummary } from '@my-app/shared';
+import { battleMapResponseSchema, CHEST_REWARDS, CHEST_TIERS, chestResultSchema } from '@my-app/shared';
 import InfoHint from './InfoHint';
 import AppIcon from './AppIcon';
 import BattleRulesHelp from './BattleRulesHelp';
+import MeasuredStepsCard from './MeasuredStepsCard';
+import MapTreasureChests from './MapTreasureChests';
+import type { RunStepSummary } from '@my-app/shared';
+import type {RunningCourse} from '@my-app/shared';
+import type {CompletedCourseDraft} from './RunningCoursesPanel';
+import { AGE_BANDS } from '@my-app/shared';
+import { loadWorldTerritories } from '../lib/territoryCache';
+import { escapeMapText } from '../lib/mapText';
+import { useChestPreview } from '../lib/useChestPreview';
 
 const toggleButtonStyle = (active: boolean): React.CSSProperties => ({
   backgroundColor: active ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
@@ -21,6 +30,7 @@ const toggleButtonStyle = (active: boolean): React.CSSProperties => ({
   fontWeight: '800',
   transition: 'all 0.2s ease',
   fontSize: '0.82rem',
+  minHeight: 44,
   flex: 1,
   textAlign: 'center',
   outline: 'none',
@@ -33,7 +43,13 @@ export interface MapViewProps {
   setActivityMode: (mode: ActivityMode) => void;
   runningSessionId: string | null;
   runningBattleId: string | null;
-  startOnlineRun: (battleId?: string) => Promise<string | null>;
+  runningChest?: MapChest | null;
+  startOnlineRun: (battleId?: string, chest?: MapChest) => Promise<string | null>;
+  finishMotionTelemetry?: () => Promise<[number,number][] | null>;
+  stepSummary?: RunStepSummary | null;
+  nativeStepsAvailable?: boolean;
+  courses?:RunningCourse[];selectedCourse?:string;onSelectCourse?:(id:string)=>void;courseDraft?:CompletedCourseDraft|null;
+  onCompletedCourseRoute?:(sessionId:string,route:[number,number][])=>void;onOpenCourses?:()=>void;
   onClearRunningSession: () => void;
   onRunSaved: () => void;
   isTracking: boolean;
@@ -61,7 +77,12 @@ export const MapView: React.FC<MapViewProps> = ({
   setActivityMode,
   runningSessionId,
   runningBattleId,
+  runningChest,
   startOnlineRun,
+  finishMotionTelemetry,
+  stepSummary,
+  nativeStepsAvailable,
+  courses=[],selectedCourse='',onSelectCourse,courseDraft,onCompletedCourseRoute,onOpenCourses,
   onClearRunningSession,
   onRunSaved,
   isTracking,
@@ -127,7 +148,18 @@ export const MapView: React.FC<MapViewProps> = ({
     return () => { active = false; window.clearInterval(interval); };
   }, [mapBattleId, battleRefresh]);
   const [isSaving, setIsSaving] = useState(false);
-  const [viewMode, setViewMode] = useState<'all' | 'mine'>('all');
+  const chestPreviewTier = useChestPreview(isTracking && !isSaving && runningChest ? runningSessionId : null);
+  const chestPreviewLabel = CHEST_TIERS.find(tier => tier.id === chestPreviewTier)?.label;
+  const [selectedChest, setSelectedChest] = useState<MapChest | null>(null);
+  const [claimedChestIds, setClaimedChestIds] = useState<string[]>([]);
+  const [chestMessage, setChestMessage] = useState('');
+  useEffect(() => { if (activityMode !== 'personal') setSelectedChest(null); }, [activityMode]);
+  const [viewMode, setViewMode] = useState<'all' | 'mine' | 'friends'>('all');
+  const [ageFilter, setAgeFilter] = useState('');
+  const [territoryError, setTerritoryError] = useState('');
+  const requestSequence = useRef(0);
+  const worldScope = activityMode === 'personal' && !mapBattleId && viewMode === 'friends' ? 'friends' : 'all';
+  useEffect(() => { if (activityMode === 'team' && viewMode === 'friends') setViewMode('all'); }, [activityMode, viewMode]);
   const [territorySearch, setTerritorySearch] = useState('');
   const [isFollowing, setIsFollowing] = useState(false); // UI追尾状態
   const [justClaimedId, setJustClaimedId] = useState<string | null>(null); // 新規領域のフラッシュ用
@@ -176,7 +208,7 @@ export const MapView: React.FC<MapViewProps> = ({
       if ('mediaSession' in navigator) {
         (navigator as any).mediaSession.metadata = new MediaMetadata({
           title: 'ランニング計測中...',
-          artist: 'PhysiProof',
+          artist: 'foope',
           album: 'バックグラウンドで位置情報を記録しています',
           artwork: [
             { src: 'https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?w=192&h=192&fit=crop', sizes: '192x192', type: 'image/jpeg' }
@@ -232,20 +264,23 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [isTracking]);
 
   const fetchTerritories = async () => {
+    const sequence = ++requestSequence.current;
     try {
-      const res = await client.api.territories.$get();
-      if (res.ok) {
-        const data = await res.json();
-        setTerritories((data as any).territories || []);
-      }
+      const next = await loadWorldTerritories(worldScope);
+      if (sequence === requestSequence.current) { setTerritories(next); setTerritoryError(''); }
     } catch (e) {
-      console.error('Failed to fetch territories:', e);
+      if (sequence === requestSequence.current) { setTerritories([]); setTerritoryError(e instanceof Error ? e.message : '領域を読み込めませんでした。'); }
     }
   };
 
   useEffect(() => {
-    fetchTerritories();
-  }, []);
+    setTerritories([]);
+    void fetchTerritories();
+    const refresh = () => { if (document.visibilityState === 'visible') void fetchTerritories(); };
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    return () => { ++requestSequence.current; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [worldScope, currentUser.uid]);
 
   useEffect(() => {
     const mapContainer = document.getElementById('map-container');
@@ -352,9 +387,9 @@ export const MapView: React.FC<MapViewProps> = ({
 
     if (mapBattleId) return;
     const territoryLayers: any[] = [];
-    const currentUid = localStorage.getItem('physiproof_test_uid') || '';
+    const currentUid = currentUser.uid;
 
-    const activityTerritories = territories.filter((t) => activityMode === 'team'
+    const activityTerritories = territories.filter(t => activityMode !== 'personal' || !ageFilter || t.age_band === ageFilter).filter((t) => activityMode === 'team'
       ? t.team_id !== null && t.team_id !== undefined
       : t.team_id === null || t.team_id === undefined);
     const filteredTerritories = activityTerritories.filter(t => {
@@ -416,7 +451,8 @@ export const MapView: React.FC<MapViewProps> = ({
                 ${popupHeaderText}
               </strong>
               <div style="height: 1px; background: rgba(255,255,255,0.08); margin-bottom: 8px;"></div>
-              <strong>所有者:</strong> ${t.user_name || '不明'}<br/>
+              <strong>所有者:</strong> ${escapeMapText(t.user_name || '不明')}<br/>
+              ${activityMode === 'personal' ? `<strong>年代:</strong> ${escapeMapText(AGE_BANDS.find(b => b.value === t.age_band)?.label ?? '未設定')}<br/>` : ''}
               <strong>面積:</strong> ${(t.area_sqm || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} ㎡<br/>
               <strong>占領日時:</strong> ${new Date(t.captured_at).toLocaleString()}
             </div>
@@ -433,7 +469,7 @@ export const MapView: React.FC<MapViewProps> = ({
         mapInstance.removeLayer(layer);
       });
     };
-  }, [territories, mapInstance, viewMode, activityMode, currentUser.team_id, mapBattleId]);
+  }, [territories, mapInstance, viewMode, activityMode, currentUser.team_id, mapBattleId, ageFilter]);
 
   useEffect(() => {
     if (!mapInstance || !mapBattleId || !battleMap) return;
@@ -737,8 +773,15 @@ export const MapView: React.FC<MapViewProps> = ({
 
   const toggleTracking = async () => {
     const uid = currentUser.uid;
+    const recordedRoute = route;
     if (isTracking) {
       setIsSaving(true);
+      let route = recordedRoute;
+      try { route = await finishMotionTelemetry?.() ?? recordedRoute; }
+      catch(error){
+        if(runningSessionId)await client.api.running.sessions[':id'].$delete({param:{id:runningSessionId}}).catch(()=>undefined);
+        clearTrackingData();setIsSaving(false);alert(error instanceof Error?error.message:'歩数のオンライン計測を完了できませんでした。');return;
+      }
       setIsTracking(false);
 
       const durationSec = trackingStartTime ? (Date.now() - trackingStartTime) / 1000 : 0;
@@ -770,6 +813,21 @@ export const MapView: React.FC<MapViewProps> = ({
           json: { distance_m: totalDist, duration_sec: durationSec }
         });
         if (!completion.ok) throw new Error('Could not save the online run');
+        if (runningChest) {
+          const data = await completion.json();
+          const result = chestResultSchema.safeParse('chest' in data ? data.chest : null);
+          if (result.success) {
+            const tier = CHEST_TIERS.find(item => item.id === result.data.tier)?.label;
+            const reward = result.data.reward ?? CHEST_REWARDS.find(item => item.id === result.data.reward_id);
+            setClaimedChestIds(ids => [...ids, runningChest.id]);
+            setSelectedChest(null);
+            setChestMessage(reward ? `宝箱（${tier}）から「${reward.name}」を獲得。${reward.kind === 'title' ? 'ホームで称号を選べます。' : '個人ユニフォーム工房で使えます。'}`
+              : `宝箱（${tier}）を開け、達成記念バッジを獲得しました。`);
+          } else {
+            setChestMessage('今回は宝箱を獲得できませんでした。入れ替え時刻と、黄色い円を囲んで一周したかを確認してください。');
+          }
+        }
+        onCompletedCourseRoute?.(runningSessionId,route);
       } catch (error) {
         console.error('Failed to save online running session:', error);
         alert('走行記録をサーバーへ保存できませんでした。オフライン記録としては保存されません。');
@@ -937,8 +995,9 @@ export const MapView: React.FC<MapViewProps> = ({
         alert('この対戦では計測を開始できません。対戦期間と参加資格を確認してください。');
         return;
       }
-      const sessionId = await startOnlineRun(mapBattleId || undefined);
+      const sessionId = await startOnlineRun(mapBattleId || undefined, activityMode === 'personal' ? selectedChest ?? undefined : undefined);
       if (!sessionId) return;
+      setChestMessage('');
       setIsTracking(true);
       setRoute([]);
       setTrackingStartTime(Date.now());
@@ -963,7 +1022,7 @@ export const MapView: React.FC<MapViewProps> = ({
     return 'RECRUIT';
   };
 
-  const currentUid = localStorage.getItem('physiproof_test_uid') || '';
+  const currentUid = currentUser.uid;
   const ownTerritories = territories.filter(t => activityMode === 'team'
     ? t.team_id === currentUser.team_id
     : t.user_id === currentUid && (t.team_id === null || t.team_id === undefined));
@@ -1119,6 +1178,12 @@ export const MapView: React.FC<MapViewProps> = ({
           ))}
         </div>
       </section>
+      {activityMode === 'personal' && <>
+        <MapTreasureChests map={mapInstance} selected={isTracking || isSaving ? runningChest ?? null : selectedChest}
+          onSelect={setSelectedChest} disabled={isTracking || isSaving} claimedIds={claimedChestIds}
+          previewTier={chestPreviewTier} />
+        {chestMessage && <p className="pp-map-chests" role="status">{chestMessage}</p>}
+      </>}
       <div style={{ position: 'relative', width: 'calc(100% + 2rem)', marginLeft: '-1rem', overflow: 'hidden', borderRadius: '16px' }}>
         <style dangerouslySetInnerHTML={{ __html: hudCss }} />
         
@@ -1322,19 +1387,37 @@ export const MapView: React.FC<MapViewProps> = ({
         <button 
           type="button" 
           onClick={() => setViewMode('all')} 
+          aria-pressed={viewMode === 'all'}
           style={toggleButtonStyle(viewMode === 'all')}
         >
-          <AppIcon name="globe" /> 全エリア
+          <AppIcon name="globe" /> 全員
         </button>
         <button 
           type="button" 
           onClick={() => setViewMode('mine')} 
+          aria-pressed={viewMode === 'mine'}
           style={toggleButtonStyle(viewMode === 'mine')}
         >
           <AppIcon name="user" /> マイエリア
         </button>
+        {activityMode === 'personal' && !mapBattleId && <button type="button" aria-pressed={viewMode === 'friends'} onClick={() => setViewMode('friends')} style={toggleButtonStyle(viewMode === 'friends')}><AppIcon name="friends" /> フレンド</button>}
       </div>
+      {activityMode === 'personal' && !mapBattleId && <label style={{ display:'flex', alignItems:'center', flexWrap:'wrap', gap:10, marginTop:12, color:'#b3c4d3', fontSize:14 }}>
+        年代で表示
+        <select aria-label="領域の所有者の年代" value={ageFilter} onChange={e => setAgeFilter(e.target.value)} style={{ minHeight:44, fontSize:16, background:'#12202e', color:'#fff', padding:'6px 12px', borderRadius:10, border:'1px solid #395268' }}>
+          <option value="">すべての年代</option>{AGE_BANDS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+        </select>
+        <InfoHint label="マップの表示範囲" text="全員はすべての個人領域、フレンドは自分と承認済みフレンドの領域です。表示の絞り込みだけで、領域の所有権や得点は変わりません。プロフィールの非公開設定は通常マップには適用されません。" />
+      </label>}
+      {territoryError && <div role="alert">{territoryError}<button type="button" onClick={() => void fetchTerritories()}>再試行</button></div>}
 
+      {onSelectCourse&&<label style={{display:'grid',gap:8,marginTop:16,color:'#c8d7e3',fontSize:14}}>走るコース（任意）<select aria-label="走るコース" value={selectedCourse} onChange={e=>onSelectCourse(e.target.value)} disabled={isTracking||isSaving} style={{width:'100%',minWidth:0,boxSizing:'border-box',fontSize:16,minHeight:46,padding:10,border:'1px solid #425c70',borderRadius:8,background:'#122332',color:'#fff'}}><option value="">選択しない</option>{courses.map(c=><option key={c.id} value={c.id}>{c.name} · {c.laps}周</option>)}</select>{!!selectedCourse&&<small>走行中のGPSをコースと照合します。位置統計の同意とは別です。</small>}</label>}
+      {courseDraft&&onOpenCourses&&<button type="button" onClick={onOpenCourses} disabled={isSaving} style={{minHeight:44,marginTop:12,width:'100%',padding:10,border:'1px solid #425c70',background:'#122332',color:'#bff440',borderRadius:10}}>今回の走行をコースとして保存・周回と報酬を見る</button>}
+      {isTracking && !isSaving && runningChest && <div role="status">
+        {chestPreviewLabel && <p className={`pp-chest-estimate is-${chestPreviewTier}`}>
+          今ここで終了すると、宝箱の報酬は <strong>「{chestPreviewLabel}」</strong> の見込み
+        </p>}
+      </div>}
       <button
         onClick={toggleTracking}
         disabled={isSaving || (!isTracking && !!mapBattleId && !battleMap?.can_run)}
@@ -1370,8 +1453,9 @@ export const MapView: React.FC<MapViewProps> = ({
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.55rem' }}>
         <span style={{ alignSelf: 'center', marginRight: '0.35rem', color: '#8d98a8', fontSize: '0.68rem' }}>領域化ルール</span>
-        <InfoHint label="領域化のルール" text="1周して囲むと内側全体を領域化し、囲まない場合は通ったルート（幅12m）が領域になります。平均速度40km/h超、または30km/h以上で歩数が不足する移動は、不正防止のため領域に反映されません。徒歩またはランニングで計測してください。" />
+        <InfoHint label="領域化のルール" text="1周して囲むと内側全体を領域化し、囲まない場合は通ったルート（幅12m）が領域になります。平均速度40km/h超の記録は保存できません。実測歩数の移動確認はGPS精度・速度・歩数を別途照合します。徒歩またはランニングで計測してください。" />
       </div>
+      <div style={{marginTop:16}}><MeasuredStepsCard userId={currentUser.uid} tracking={isTracking} live={isTracking?stepSummary:null} nativeAvailable={nativeStepsAvailable}/></div>
 
       {!mapBattleId && <section style={{
         marginTop: '1.25rem',

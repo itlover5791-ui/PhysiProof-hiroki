@@ -1,13 +1,21 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "my-app-backend"
-main = "src/index.ts"
+main = "src/worker.ts"
 compatibility_date = "2024-04-03"
+
+[triggers]
+crons = ["*/5 * * * *"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "physiproof-db"
 database_id = "d0380ad0-d78d-4318-87b1-6ea4fe86012e"
 migrations_dir = "migrations"
+
+# Card-free Workers KV; no R2 subscription or payment method required.
+[[kv_namespaces]]
+binding = "UNIFORM_ASSETS_KV"
+id = "ac3d9ea43b8f4d1fbb7d35a05f76b1ba"
 
 [vars]
 GEMINI_API_KEY = "AQ.Ab8RN6IBL7PdDjH8-Xtlb9uOcard6hOa4jmpTBr839nxv27gzw"

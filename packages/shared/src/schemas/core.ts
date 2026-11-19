@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { profileAgeSchema, territoryMapVisibilitySchema } from './profile-map.schema';
 
 export const userSchema = z.object({
   id: z.string().uuid(),
@@ -9,7 +10,8 @@ export const userSchema = z.object({
   target_calories_burned: z.number().nonnegative().optional(),
   target_calories_consumed: z.number().nonnegative().optional(),
   gender: z.enum(['male', 'female', 'other']).optional(),
-  age: z.number().int().positive().optional().nullable(),
+  age: profileAgeSchema.optional().nullable(),
+  territory_map_visibility: territoryMapVisibilitySchema.optional(),
   height: z.number().positive().optional().nullable(),
   avatar_id: z.string().optional(),
   level: z.number().int().positive().optional(),
@@ -84,7 +86,8 @@ export const updateProfileSchema = z.object({
   target_calories_burned: z.number().optional().nullable(),
   target_calories_consumed: z.number().optional().nullable(),
   gender: z.string().optional().nullable(),
-  age: z.number().int().positive().optional().nullable(),
+  age: profileAgeSchema.optional().nullable(),
+  territory_map_visibility: territoryMapVisibilitySchema.optional(),
   height: z.number().positive().optional().nullable(),
 });
 
@@ -97,6 +100,7 @@ export const systemSettingsSchema = z.object({
   battle_holding_points_per_1000_sqm_full_period: z.string().regex(/^\d+(\.\d+)?$/, '保持ポイント係数は正の数値で入力してください').refine((value) => Number.isFinite(Number(value)) && Number(value) > 0).default('1'),
   show_home_menu: z.string().optional(),
   show_map_menu: z.string().optional(),
+  show_running_trends_menu: z.enum(['true', 'false']).optional(),
   show_uniform_menu: z.string().optional(),
   show_exercise_menu: z.string().optional(),
   show_ai_predict_menu: z.string().optional(),
@@ -138,7 +142,7 @@ export const adminUpdateUserSchema = z.object({
   target_calories_burned: z.number().nullable().optional(),
   target_calories_consumed: z.number().nullable().optional(),
   gender: z.string().nullable().optional(),
-  age: z.number().int().positive().nullable().optional(),
+  age: profileAgeSchema.nullable().optional(),
   height: z.number().positive().nullable().optional(),
   level: z.number().int().positive().optional(),
   xp: z.number().int().nonnegative().optional(),

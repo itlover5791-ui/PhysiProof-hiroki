@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import DevMenu from './pages/DevMenu';
 import Dashboard from './pages/Dashboard';
+import { GoogleCallback } from './components/GoogleAuth';
 import LoginPage from './pages/LoginPage';
 import HealthCheck from './pages/HealthCheck';
 import AdminDashboard from './pages/AdminDashboard';
@@ -81,7 +82,7 @@ const OnlineRequiredGate = ({ children }: { children: React.ReactNode }) => {
         <div style={{ fontSize: '2.5rem' }}><AppIcon name={isChecking ? 'globe' : 'offline'} /></div>
         <h1 style={{ fontSize: '1.2rem' }}>{isChecking ? 'オンライン接続を確認中…' : 'オンライン接続が必要です'}</h1>
         <p style={{ color: '#aab2c0', lineHeight: 1.7, fontSize: '0.9rem' }}>
-          PhysiProofは走行の記録と領域の更新にオンライン通信を使います。接続を確認してから再読み込みしてください。オフライン中の記録は保存・後送されません。
+          foopeは走行の記録と領域の更新にオンライン通信を使います。接続を確認してから再読み込みしてください。オフライン中の記録は保存・後送されません。
         </p>
         <button onClick={() => window.location.reload()} style={{ marginTop: '0.5rem', padding: '0.7rem 1.2rem', border: 0, borderRadius: '10px', background: '#00d4ff', color: '#001015', fontWeight: 800, cursor: 'pointer' }}>再読み込み</button>
       </div>
@@ -114,7 +115,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 
 const AuthGuard = ({ children }: { children: React.ReactNode }) => {
   const user = localStorage.getItem('physiproof_user');
-  if (!user) {
+  if (!user || !localStorage.getItem('physiproof_access_token')) {
     return <Navigate to="/login" replace />;
   }
   return <>{children}</>;
@@ -122,7 +123,7 @@ const AuthGuard = ({ children }: { children: React.ReactNode }) => {
 
 const AdminGuard = ({ children }: { children: React.ReactNode }) => {
   const user = localStorage.getItem('physiproof_user');
-  if (!user) {
+  if (!user || !localStorage.getItem('physiproof_access_token')) {
     return <Navigate to="/login" replace />;
   }
   try {
@@ -138,7 +139,7 @@ const AdminGuard = ({ children }: { children: React.ReactNode }) => {
 
 const Root = () => {
   const user = localStorage.getItem('physiproof_user');
-  if (!user) {
+  if (!user || !localStorage.getItem('physiproof_access_token')) {
     return <Navigate to="/login" replace />;
   }
   try {
@@ -152,13 +153,30 @@ const Root = () => {
   return <Navigate to="/dashboard" replace />;
 };
 
+function SessionNotice() {
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    const show = () => setExpired(true), hide = () => setExpired(false);
+    const changed = (e: StorageEvent) => { if (e.key === 'physiproof_access_token' && e.newValue) setExpired(false); };
+    window.addEventListener('physiproof-session-expired', show);
+    window.addEventListener('physiproof-session-restored', hide);
+    window.addEventListener('storage', changed);
+    return () => { window.removeEventListener('physiproof-session-expired', show); window.removeEventListener('physiproof-session-restored', hide); window.removeEventListener('storage', changed); };
+  }, []);
+  return expired ? <div role="alert" style={{ position:'fixed', top:8, left:8, right:8, zIndex:5000, padding:14, borderRadius:12, background:'#5b2639', color:'#fff', boxShadow:'0 4px 24px #0008' }}>
+    ログインの有効期限が切れています。編集中の画面はそのまま、<a href="/login" target="_blank" rel="noopener noreferrer" style={{ color:'#bff440', display:'inline-block', padding:8 }}>別タブで再ログイン</a>してください。
+  </div> : null;
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <BrowserRouter>
+        <SessionNotice />
         <OnlineRequiredGate>
           <Routes>
             <Route path="/" element={<Root />} />
+            <Route path="/auth/google/callback" element={<GoogleCallback />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/dashboard" element={<AuthGuard><Dashboard /></AuthGuard>} />
             <Route path="/admin" element={<AdminGuard><AdminDashboard /></AdminGuard>} />

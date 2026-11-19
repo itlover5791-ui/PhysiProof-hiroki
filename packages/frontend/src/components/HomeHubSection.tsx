@@ -1,5 +1,7 @@
 import React from 'react';
-import type { ActivityMode, UniformDesign } from '@my-app/shared';
+import type { ActivityMode, UniformDesign, RunStepSummary } from '@my-app/shared';
+import MeasuredStepsCard from './MeasuredStepsCard';
+import ExternalRunningPanel from './ExternalRunningPanel';
 import { getUserAvatarSrc } from '../pages/Dashboard';
 import InfoHint from './InfoHint';
 import RunningTitleCard from './RunningTitleCard';
@@ -29,7 +31,7 @@ interface HomeHubSectionProps {
     legacy_distance_is_estimated?: number;
   };
   todayMission: any | null;
-  onNavigateTab: (tab: 'map' | 'exercise' | 'ai-predict' | 'meal' | 'ranking' | 'chat' | 'uniform') => void;
+  onNavigateTab: (tab: import('../lib/dashboardMenus').DashboardTab) => void;
   onStartQuickRun: () => void;
   caloriesBurnedToday: number;
   caloriesConsumedToday: number;
@@ -39,8 +41,12 @@ interface HomeHubSectionProps {
   activityMode: ActivityMode;
   onActivityModeChange: (mode: ActivityMode) => void;
   isTracking: boolean;
+  stepSummary?: RunStepSummary | null;
+  nativeStepsAvailable?: boolean;
   showMealMenu?: boolean;
   activeUniform?: UniformDesign | null;
+  courseFrame?:boolean;courseTitle?:string|null;
+  chestTitle?: string | null;
 }
 
 const HomeHubSection: React.FC<HomeHubSectionProps> = ({
@@ -56,8 +62,11 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
   activityMode,
   onActivityModeChange,
   isTracking,
+  stepSummary,
+  nativeStepsAvailable,
   showMealMenu = true,
   activeUniform,
+  courseFrame=false,courseTitle,chestTitle,
 }) => {
   const currentWeightVal = currentUser.current_weight || 70;
   const targetWeightVal = currentUser.target_weight || 68;
@@ -72,20 +81,6 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
   const xpNeeded = currentLevel * 100;
   const xpProgress = Math.min(1, currentXp / xpNeeded);
 
-  // Steps / Calories mock calculations matching design
-  const currentSteps = Math.round(caloriesBurnedToday * 25);
-  const targetSteps = Math.round(targetBurn * 25);
-  const stepProgress = Math.min(1, currentSteps / (targetSteps || 1));
-  const stepPercentage = Math.round(stepProgress * 100);
-  const activeTimeMins = Math.round(caloriesBurnedToday * 0.15); // 100 kcal = 15 mins roughly
-  const activeTimeHoursStr = activeTimeMins >= 60 
-    ? `${Math.floor(activeTimeMins / 60)}h ${activeTimeMins % 60}m`
-    : `${activeTimeMins}m`;
-
-  // SVG parameters for step goal circle
-  const circleRadius = 40;
-  const circleCircumference = 2 * Math.PI * circleRadius;
-  const circleDashoffset = circleCircumference - stepProgress * circleCircumference;
 
   // Past 7 Days calorie trend generator based on real target
   const getPast7Days = () => {
@@ -121,7 +116,7 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
       return [{
         title: 'CARDIO BURST',
         type: 'Running',
-        time: `${activeTimeHoursStr}`,
+        time: '本日の運動記録',
         kcal: `${Math.round(caloriesBurnedToday)} kcal`,
         stat: `AGI +${Math.max(1, Math.round(caloriesBurnedToday / 150))}`,
         icon: '🏃‍♂️',
@@ -279,6 +274,7 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
       </section>
 
       <RunningTitleCard totalDistanceM={currentUser.personal_total_distance_m ?? 0} />
+      <ExternalRunningPanel key={currentUser.uid} userId={currentUser.uid} appDistanceM={currentUser.personal_total_distance_m??0}/>
 
       <div className="hud-dashboard">
         
@@ -289,6 +285,7 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
             <div style={{ position: 'relative', width: '65px', height: '65px', flexShrink: 0 }}>
               <img
                 src={getUserAvatarSrc(currentUser.avatar_id, currentUser.avatar_image)}
+                className={courseFrame?'pp-course-frame':undefined}
                 style={{
                   width: '100%',
                   height: '100%',
@@ -319,6 +316,8 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
               <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 'bold', color: '#fff', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                 {currentUser.name}
               </h3>
+              {courseTitle&&<div style={{color:'#c5e8ff',fontSize:12,marginTop:5}}>{courseTitle}</div>}
+              {chestTitle && <div style={{ color: '#ffda86', fontSize: 12, marginTop: 5 }}>{chestTitle}</div>}
               <div style={{ fontSize: '0.65rem', color: '#8a8a93', marginTop: '4px' }}>
                 XP: {currentXp} / {xpNeeded} XP
               </div>
@@ -357,46 +356,7 @@ const HomeHubSection: React.FC<HomeHubSectionProps> = ({
           </div>
         </div>
 
-        {/* PANEL 2: DAILY GOAL (Circle Indicator) */}
-        <div className="hud-card">
-          <div className="hud-title">DAILY GOAL: {stepPercentage}%</div>
-          <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', height: '100%', flex: 1, minHeight: '130px' }}>
-            <div style={{ position: 'relative', width: '120px', height: '120px', flexShrink: 0 }}>
-              <svg width="120" height="120" style={{ transform: 'rotate(-90deg)' }}>
-                <circle cx="60" cy="60" r={circleRadius} fill="transparent" stroke="rgba(0, 255, 136, 0.05)" strokeWidth="6" />
-                <circle
-                  cx="60"
-                  cy="60"
-                  r={circleRadius}
-                  fill="transparent"
-                  stroke="#00ff88"
-                  strokeWidth="8"
-                  strokeDasharray={circleCircumference}
-                  strokeDashoffset={circleDashoffset}
-                  strokeLinecap="round"
-                  style={{ transition: 'stroke-dashoffset 0.8s ease-in-out', filter: 'drop-shadow(0 0 6px #00ff88)' }}
-                />
-              </svg>
-              <div style={{
-                position: 'absolute',
-                top: 0, left: 0, right: 0, bottom: 0,
-                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
-              }}>
-                <span style={{ fontSize: '0.52rem', color: 'rgba(0, 255, 136, 0.6)', letterSpacing: '0.5px' }}>STEPS TODAY</span>
-                <span style={{ fontSize: '1.2rem', color: '#fff', fontWeight: '900', fontFamily: "'Outfit', 'Share Tech Mono', sans-serif" }}>
-                  {currentSteps.toLocaleString()}
-                </span>
-                <span style={{ fontSize: '0.62rem', color: '#8a8a93', marginTop: '2px' }}>{activeTimeHoursStr}</span>
-              </div>
-            </div>
-            <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '100px' }}>
-              <div style={{ fontSize: '0.52rem', color: '#8a8a93', letterSpacing: '0.5px' }}>GOAL TARGET</div>
-              <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#fff' }}>{targetSteps.toLocaleString()} <span style={{ fontSize: '0.6rem', color: '#8a8a93' }}>steps</span></div>
-              <div style={{ fontSize: '0.52rem', color: '#8a8a93', letterSpacing: '0.5px', marginTop: '4px' }}>CALORIES BURNED</div>
-              <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#00ff88' }}>{Math.round(caloriesBurnedToday)} <span style={{ fontSize: '0.6rem', color: '#8a8a93' }}>kcal</span></div>
-            </div>
-          </div>
-        </div>
+        <MeasuredStepsCard userId={currentUser.uid} tracking={isTracking} live={isTracking?stepSummary:null} nativeAvailable={nativeStepsAvailable}/>
 
         {/* PANEL 3: CALORIE TRACKER */}
         {showMealMenu && (

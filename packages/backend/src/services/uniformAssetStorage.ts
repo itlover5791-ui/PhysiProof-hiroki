@@ -1,11 +1,12 @@
-import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
-import { builtinUniformAsset, uniformAssetReferences, uniformAssetSchema, uniformAssetRefSchema,
-  UNIFORM_IMAGE_MAX_BYTES, UNIFORM_THUMBNAIL_MAX_BYTES } from '@my-app/shared';
+import type { D1Database } from '@cloudflare/workers-types';
+import { builtinUniformAsset, uniformAssetReferences, uniformAssetSchema, uniformAssetRefSchema, CHEST_REWARDS,
+  UNIFORM_IMAGE_MAX_BYTES, UNIFORM_THUMBNAIL_MAX_BYTES, uniformAssetSourceSchema, uniformDrawingSourceSchema } from '@my-app/shared';
 import type { UniformAsset, UniformAssetRef, UniformDesign } from '@my-app/shared';
 
-export class UniformAssetError extends Error {
-  constructor(message: string, readonly status: 400 | 403 | 404 | 409 | 413 | 503 = 400) { super(message); }
-}
+import {UniformAssetError} from './uniformAssetError';
+export {UniformAssetError} from './uniformAssetError';
+import {getStorageBody} from './uniformStorage';
+import type {UniformStorageBindings} from './uniformStorage';
 export type UniformAssetVersionRow = { metadata_json: string; image_key: string | null; thumbnail_key: string | null; source_key: string | null };
 export async function assetVersion(db: D1Database, ref: UniformAssetRef): Promise<{ asset: UniformAsset; row?: UniformAssetVersionRow } | null> {
   if (!uniformAssetRefSchema.safeParse(ref).success) return null;
@@ -15,13 +16,46 @@ export async function assetVersion(db: D1Database, ref: UniformAssetRef): Promis
     .bind(ref.id, ref.revision).first<UniformAssetVersionRow>();
   return row ? { asset: uniformAssetSchema.parse(JSON.parse(row.metadata_json)), row } : null;
 }
-export async function validateUniformReferences(db: D1Database, design: UniformDesign, allowDraft = false) {
+export async function validateUniformReferences(db: D1Database, design: UniformDesign, allowDraft = false, personalOwner?: string) {
+  if (design.version === 2) {
+    const selected = [design.front_pattern, design.back_pattern, design.emblem];
+    const rewardIds = CHEST_REWARDS.filter(reward => selected.includes(reward.id)).map(reward => reward.id);
+    if (rewardIds.length) {
+      if (!personalOwner) throw new UniformAssetError('宝箱の報酬は個人ユニフォームで使えます。');
+      const unlocked = await db.prepare(`SELECT COUNT(*) AS count FROM map_chest_claims
+        WHERE user_id=? AND reward_id IN (SELECT value FROM json_each(?))`)
+        .bind(personalOwner, JSON.stringify(rewardIds)).first<{ count: number }>();
+      if (unlocked?.count !== rewardIds.length) throw new UniformAssetError('獲得済みの宝箱素材を選んでください。');
+    }
+  }
   for (const { kind, ref } of uniformAssetReferences(design)) {
     const version = await assetVersion(db, ref);
     if (!version || version.asset.kind !== kind || (!allowDraft && version.asset.status !== 'published')) {
       throw new UniformAssetError('使用する素材の種類・公開状態・バージョンを確認してください。');
     }
+    if (version.asset.reward_only) {
+      const owned = personalOwner && await db.prepare(`SELECT 1 FROM map_chest_claims
+        WHERE user_id=? AND reward_json IS NOT NULL AND json_extract(reward_json, '$.asset.id')=?
+          AND json_extract(reward_json, '$.asset.revision')=? LIMIT 1`)
+        .bind(personalOwner, ref.id, ref.revision).first();
+      if (!owned) throw new UniformAssetError('個人ユニフォームには獲得済みの宝箱素材を選んでください。');
+    }
   }
+  if(design.version===2)for(const role of ['front_pattern','back_pattern','emblem'] as const){
+    const colors=design.part_colors?.[role];if(!colors||!Object.keys(colors).length)continue;
+    const ref=design[role];
+    const version=typeof ref==='object'?await assetVersion(db,ref):null;
+    const ids=new Set(version?.asset.color_regions?.parts.map(p=>p.id));
+    if(Object.keys(colors).some(id=>!ids.has(id)))throw new UniformAssetError('使用する素材に対応する部位カラーを指定してください。');
+  }
+}
+export async function uniformAssetSource(env: UniformStorageBindings, key: string | null) {
+  const response=await storageObject(env,key,'application/json');
+  try {
+    const value=await response.json();
+    if(value&&typeof value==='object'&&'format' in value&&value.format==='uniform-studio-asset-source')return uniformAssetSourceSchema.parse(value);
+    return {drawing:uniformDrawingSourceSchema.parse(value),color_regions:undefined};
+  }catch{throw new UniformAssetError('素材の編集データを読み込めません。',503);}
 }
 const crcTable = Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -75,11 +109,10 @@ export async function validateUniformPng(dataUrl: string, maxDimension: number, 
   } catch { try { await input.cancel(); } catch {} bad(); }
   return { bytes, width, height };
 }
-export async function storageObject(bucket: R2Bucket | undefined, key: string | null, type: string) {
-  if (!bucket || !key) throw new UniformAssetError('素材画像の保存先が設定されていません。', 503);
-  const object = await bucket.get(key);
-  if (!object) throw new UniformAssetError('素材画像が見つかりません。', 404);
-  return new Response(object.body as unknown as ReadableStream, { headers: { 'Content-Type': type,
+export async function storageObject(env: UniformStorageBindings, key: string | null, type: string) {
+  if (!key) throw new UniformAssetError('素材画像が見つかりません。', 404);
+  const body = await getStorageBody(env,key);
+  return new Response(body as unknown as ReadableStream, { headers: { 'Content-Type': type,
     'Cache-Control': type==='image/png' ? 'public, max-age=31536000, immutable' : 'private, no-store',
     'X-Content-Type-Options':'nosniff', 'Content-Disposition':type==='image/png'?'inline':'attachment; filename="uniform-drawing.json"' } });
 }
