@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { loginSchema, signupSchema, type LoginRequest, type SignupRequest } from '@my-app/shared';
 import { useNavigate } from 'react-router-dom';
 import client from '../lib/hc';
+import { GoogleButton } from '../components/GoogleAuth';
 import AppIcon from '../components/AppIcon';
 
 const LoginPage: React.FC = () => {
@@ -137,6 +138,7 @@ const LoginPage: React.FC = () => {
           </div>
         )}
  
+        <GoogleButton />
         <form onSubmit={isSignup ? signupForm.handleSubmit(onSignup) : loginForm.handleSubmit(onLogin)} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
           {isSignup && (
             <div>

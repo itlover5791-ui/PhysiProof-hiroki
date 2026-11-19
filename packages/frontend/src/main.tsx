@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import DevMenu from './pages/DevMenu';
 import Dashboard from './pages/Dashboard';
+import { GoogleCallback } from './components/GoogleAuth';
 import LoginPage from './pages/LoginPage';
 import HealthCheck from './pages/HealthCheck';
 import AdminDashboard from './pages/AdminDashboard';
@@ -175,6 +176,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <OnlineRequiredGate>
           <Routes>
             <Route path="/" element={<Root />} />
+            <Route path="/auth/google/callback" element={<GoogleCallback />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/dashboard" element={<AuthGuard><Dashboard /></AuthGuard>} />
             <Route path="/admin" element={<AdminGuard><AdminDashboard /></AdminGuard>} />

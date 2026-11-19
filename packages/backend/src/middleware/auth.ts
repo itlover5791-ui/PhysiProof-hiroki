@@ -1,5 +1,18 @@
+import type { Context } from 'hono';
+import { getCookie } from 'hono/cookie';
 import { createMiddleware } from 'hono/factory';
 import { resolveSession } from '../services/authSession';
+
+export function getSessionToken(c:Context) {
+  const header = c.req.header('Authorization');
+  if (header) return header.startsWith('Bearer ') ? header.slice(7) : undefined;
+  if (c.env.GOOGLE_WEB_COOKIE !== 'true' || !c.env.GOOGLE_REDIRECT_URI) return;
+  const allowed = new URL(c.env.GOOGLE_REDIRECT_URI).origin;
+  const origin = c.req.header('Origin');
+  if (origin && origin !== allowed) return;
+  if (!['GET','HEAD'].includes(c.req.method) && origin !== allowed) return;
+  return getCookie(c,'__Host-pp_session');
+}
 
 /**
  * Password-issued opaque sessions. The old export name is retained for routes.
@@ -15,11 +28,10 @@ export const firebaseAuth = createMiddleware(async (c, next) => {
     return await next();
   }
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const token = getSessionToken(c);
+  if (!token) {
     return c.json({ error: '認証トークンが不足しています。' }, 401);
   }
-
-  const token = authHeader.split(' ')[1];
 
   try {
     const identity = await resolveSession(c.env.DB, token);
@@ -46,17 +58,17 @@ export const verifyUserOwnership = (userIdInBody: string, jwtSub: string) => {
  */
 export const optionalAuth = createMiddleware(async (c, next) => {
   const authHeader = c.req.header('Authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  const token = getSessionToken(c);
+  if (!token) {
     return await next();
   }
 
-  if (c.env.AUTH_TEST_MODE === 'isolated-fixture' && authHeader.startsWith('Bearer test-token:')) {
+  if (c.env.AUTH_TEST_MODE === 'isolated-fixture' && authHeader?.startsWith('Bearer test-token:')) {
     const uid = authHeader.split(':')[1] || 'demo-user';
     c.set('firebaseUser', { sub: uid, email: `${uid}@example.com` });
     return await next();
   }
 
-  const token = authHeader.split(' ')[1];
   try {
     const identity = await resolveSession(c.env.DB, token);
     if (identity) c.set('firebaseUser', identity);

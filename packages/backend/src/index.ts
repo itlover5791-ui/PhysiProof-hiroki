@@ -1,3 +1,6 @@
+import { googleAuth, type GoogleBindings } from './routes/googleAuth';
+import { getSessionToken } from './middleware/auth';
+import { deleteCookie } from 'hono/cookie';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { zValidator } from '@hono/zod-validator';
@@ -68,7 +71,7 @@ async function reverseGeocode(lat: number, lng: number): Promise<string> {
   }
 }
 
-type Bindings = {
+type Bindings = GoogleBindings & {
   DB: D1Database;
   UNIFORM_ASSETS?: R2Bucket;
   UNIFORM_ASSETS_KV?: KVNamespace;
@@ -111,6 +114,7 @@ app.use('*', cors({
 }));
 
 const routes = app
+  .route('/auth/google',googleAuth)
   .route('/map-chests', mapChestRoutes)
   .route('/admin/chest-rewards', adminChestRewardRoutes)
   .route('/running/external',externalRunningRoutes)
@@ -177,7 +181,7 @@ const routes = app
           .bind(loginId)
           .first<{ 
             id: string, name: string, avatar_id: string, avatar_image: string | null, login_id: string, role: string,
-            password_hash: string, territory_map_visibility: 'private' | 'friends',
+            password_hash: string | null, territory_map_visibility: 'private' | 'friends',
             current_weight: number | null, target_weight: number | null, target_calories_burned: number | null, 
             target_calories_consumed: number | null, gender: string | null, age: number | null, height: number | null, 
             level: number, xp: number, status_points: number, stat_str: number, stat_agi: number, stat_def: number, stat_vit: number,
@@ -192,7 +196,7 @@ const routes = app
         }, 500);
       }
         
-      if (!user || !await verifyPassword(password, user.password_hash)) {
+      if (!user?.password_hash || !await verifyPassword(password, user.password_hash)) {
         return c.json({ error: 'IDまたはパスワードが正しくありません。' }, 401);
       }
       if (!user.password_hash.startsWith('pbkdf2:')) {
@@ -243,8 +247,9 @@ const routes = app
     }
   )
   .post('/auth/logout', firebaseAuth, async c => {
-    const token = c.req.header('Authorization')!.slice(7);
+    const token = getSessionToken(c)!;
     await c.env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash=?').bind(await tokenHash(token)).run();
+    deleteCookie(c,'__Host-pp_session',{path:'/',secure:true});
     return c.json({ success: true });
   })
   .post(
@@ -1142,7 +1147,7 @@ const routes = app
         if (data.password) await db.batch([
           profileUpdate,
           db.prepare('DELETE FROM auth_sessions WHERE user_id=? AND token_hash!=?')
-            .bind(user.sub, await tokenHash(c.req.header('Authorization')!.slice(7))),
+            .bind(user.sub, await tokenHash(getSessionToken(c)!)),
           db.prepare('DELETE FROM uniform_admin_sessions WHERE user_id=?').bind(user.sub),
         ]);
         else await profileUpdate.run();

@@ -4,6 +4,7 @@ import client from '../lib/hc';
 import { ACHIEVEMENT_DEFINITIONS, profileAgeSchema, type TerritoryMapVisibility, type ProfileVitals } from '@my-app/shared';
 import ProfileVitalsForm from './ProfileVitalsForm';
 import { getUserAvatarSrc } from '../pages/Dashboard';
+import { GoogleButton } from './GoogleAuth';
 import AppIcon, { LegacyIcon } from './AppIcon';
 
 const labelStyle: React.CSSProperties = { 
@@ -203,6 +204,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
           </div>
         )}
 
+        <GoogleButton link />
         <form onSubmit={handleSubmit} style={{ overflowY: 'auto', flex: 1, paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
           <div>
             <label htmlFor="profile-age" style={labelStyle}>年齢</label>
